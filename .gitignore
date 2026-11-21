@@ -1,0 +1,20 @@
+# 機密情報
+.env
+.env.*
+*.pem
+*.key
+*credentials*.json
+secrets/
+
+# kubeconfig
+kubeconfig
+*.kubeconfig
+
+# OS / エディタ
+.DS_Store
+.idea/
+.vscode/
+
+# 一時ファイル
+tmp/
+*.log
