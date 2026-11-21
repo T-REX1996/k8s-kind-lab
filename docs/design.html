@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>k8s-kind-lab 設計方針</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: 1 column reading page, one wide architecture figure, tables for decisions, stages, budget and risks */
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --ink: #17202a;
+  --muted: #5b6672;
+  --line: #dde2e8;
+  --accent: #2f5fd0;
+  --accent-soft: #e8eefc;
+  --warn: #8f4f00;
+  --warn-soft: #fdf1de;
+  --font-body: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a;
+    --surface: #161d25;
+    --ink: #e6ebf0;
+    --muted: #9aa6b2;
+    --line: #27313c;
+    --accent: #7aa2ff;
+    --accent-soft: #1b2740;
+    --warn: #e0a458;
+    --warn-soft: #2b2316;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a;
+  --surface: #161d25;
+  --ink: #e6ebf0;
+  --muted: #9aa6b2;
+  --line: #27313c;
+  --accent: #7aa2ff;
+  --accent-soft: #1b2740;
+  --warn: #e0a458;
+  --warn-soft: #2b2316;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.8;
+  padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 48px; }
+section { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+h1 { font-size: clamp(1.7rem, 4.5vw, 2.3rem); line-height: 1.3; margin: 0; text-wrap: balance; letter-spacing: 0.01em; }
+h2 { font-size: 1.25rem; line-height: 1.4; margin: 0; text-wrap: balance; padding-top: 8px; border-top: 2px solid var(--ink); }
+h3 { font-size: 1rem; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: 6px; max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; }
+
+.eyebrow { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { color: var(--muted); font-size: 1.02rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--muted); font-size: 0.85rem; }
+.meta span { font-family: var(--font-mono); }
+
+.note { background: var(--warn-soft); color: var(--ink); border-left: 4px solid var(--warn); padding: 12px 16px; border-radius: 0 6px 6px 0; max-width: 68ch; font-size: 0.92rem; }
+.note strong { color: var(--warn); }
+.info { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: 12px 16px; border-radius: 0 6px 6px 0; max-width: 68ch; font-size: 0.92rem; }
+
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 660px; font-size: 0.9rem; line-height: 1.65; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+th { font-size: 0.78rem; letter-spacing: 0.04em; color: var(--muted); font-weight: 500; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.key { font-weight: 700; min-width: 10em; }
+tr.total td { background: var(--accent-soft); font-weight: 700; }
+
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; }
+.fig svg { display: block; width: 100%; min-width: 660px; height: auto; }
+.cap { color: var(--muted); font-size: 0.82rem; max-width: none; }
+
+/* SVG parts */
+svg text { font-family: var(--font-body); fill: var(--ink); font-size: 12.5px; }
+svg .t-mono { font-family: var(--font-mono); font-size: 11px; fill: var(--muted); }
+svg .t-head { font-weight: 700; font-size: 13px; }
+svg .t-muted { fill: var(--muted); }
+svg .vm { fill: var(--bg); stroke: var(--ink); stroke-width: 1.5; }
+svg .cluster { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
+svg .node { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+svg .pod { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+svg .pod-hot { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+svg .pod-later { fill: var(--surface); stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+svg .later { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+svg .taint { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1; }
+svg .t-warn { fill: var(--warn); font-family: var(--font-mono); font-size: 10.5px; }
+
+/* flows */
+.flow { list-style: none; padding: 0; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; counter-reset: step; }
+.flow li { counter-increment: step; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font-size: 0.9rem; line-height: 1.65; }
+.flow li::before { content: counter(step); display: inline-block; font-family: var(--font-mono); font-size: 0.78rem; color: var(--accent); margin-bottom: 4px; }
+.flow b { display: block; font-size: 0.95rem; }
+.flow .where { display: block; font-family: var(--font-mono); font-size: 0.74rem; color: var(--muted); }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.cols > div { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.cols ul { max-width: none; }
+
+footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--line); padding-top: 16px; max-width: 68ch; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<main>
+  <header style="display:flex;flex-direction:column;gap:14px;">
+    <div class="eyebrow">k8s-kind-lab / design v3</div>
+    <h1>Kind で K8s を一通り学ぶ。設計方針</h1>
+    <p class="lede">API サーバとワーカ、CPU の vLLM を Kind に載せて K8s を学ぶ。その先で Argo CD、Agent Substrate、kagent 1.0、agentgateway を動かし、kagent の OSS 活動につなげる。</p>
+    <div class="meta"><span>2026-11-21 更新</span><span>学習用リポジトリ</span><span>方針の段階。コードは未着手</span></div>
+    <p class="info"><strong>v3 での変更。</strong>最初から Google Cloud の VM で Kind を動かす前提にし、段階 0(VM を整える)と段階 1(control-plane、worker、Service、Ingress の観察)の進め方を追加しました。<br><strong>v2 での変更。</strong>kagent は 1.0 を使います。1.0 は Agent Substrate、PostgreSQL、Kubernetes 1.37 以上を前提にするため、段階 6 を二つに分け、worker を 3 台に増やす案を入れました。</p>
+    <p class="note"><strong>このページは設計の考え方だけを書いています。</strong>マニフェストとアプリのコードは自分で書き、詰まったらヒントとレビューをもらう進め方です。数値の見積りは目安で、実測してから直します。</p>
+  </header>
+
+  <section id="goal">
+    <h2>目的と制約</h2>
+    <div class="cols">
+      <div>
+        <h3>目的</h3>
+        <ul>
+          <li>Pod、Service、Ingress、Job、HPA、NetworkPolicy、RBAC を手で触って理解する</li>
+          <li>Git を正とするデプロイ(Argo CD)に移行し、違いを体感する</li>
+          <li>kagent 1.0 が、K8s の上でどう動くのかを理解する</li>
+          <li>agentgateway で、エージェントの通信を一か所に通す</li>
+          <li>kagent の OSS に、小さな貢献をする足場を作る</li>
+        </ul>
+      </div>
+      <div>
+        <h3>制約</h3>
+        <ul>
+          <li>手元の Mac は Intel i5、メモリ 16GB。全部同時に動かすには足りない</li>
+          <li>GKE の常時課金は避ける。GPU は使わない</li>
+          <li>外部の LLM API は使わない。推論はクラスタ内の vLLM(CPU)</li>
+          <li>kagent 1.0 の前提で、Kubernetes は 1.37 以上。Kind のノードイメージは着手時に確認する</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>最初の一歩。段階 0 と 1</h2>
+    <p>最初から Google Cloud の VM で Kind を動かします。まず VM を整え(段階 0)、次に control-plane と worker の仕組み、Service、Ingress を観察して理解します(段階 1)。環境を一つにそろえておくと、後の段階で移行する手間がありません。</p>
+
+    <h3>段階 0 で決めること</h3>
+    <div class="scroll" tabindex="0" role="region" aria-label="段階 0 で決めることの表">
+      <table>
+        <thead><tr><th>項目</th><th>考え方のヒント</th></tr></thead>
+        <tbody>
+          <tr><td class="key">マシンの大きさ</td><td>段階 1 は軽いので、16GB 前後の小さめで始める。vLLM を入れる段階 2 で実測し、足りなければ VM を止めてマシンタイプを変える。変更できる条件は、公式ドキュメントで確認する。</td></tr>
+          <tr><td class="key">リージョン</td><td>東京は遅延が小さく、米国のリージョンは料金が安い傾向がある。料金計算ツールで比べて決める。</td></tr>
+          <tr><td class="key">OS とディスク</td><td>Ubuntu の LTS、x86_64。ディスクは 100GB 前後が目安。ディスクの種類は料金に関わるので比べる。</td></tr>
+          <tr><td class="key">接続方法</td><td><code>gcloud compute ssh</code> と、VS Code の Remote SSH。鍵の扱いを調べる。</td></tr>
+          <tr><td class="key">外部公開</td><td>Kind の Ingress は、インターネットに公開しない。ファイアウォールは開けず、SSH のポート転送で手元のブラウザから見る。</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>段階 0 の手順</h3>
+    <div class="scroll" tabindex="0" role="region" aria-label="段階 0 の手順の表">
+      <table>
+        <thead><tr><th class="num">順</th><th>やること</th><th>調べる用語</th></tr></thead>
+        <tbody>
+          <tr><td class="num">0-1</td><td>GCP のプロジェクトと請求を確認し、<strong>予算アラートを先に設定する</strong></td><td>Budgets &amp; alerts</td></tr>
+          <tr><td class="num">0-2</td><td>Mac に gcloud を入れ、ログインする(ログインは自分で行う)</td><td>gcloud CLI</td></tr>
+          <tr><td class="num">0-3</td><td>VM を作る。コンソールでも gcloud でもよい</td><td>Compute Engine、マシンタイプ、起動ディスク</td></tr>
+          <tr><td class="num">0-4</td><td><strong>自動停止のスケジュール</strong>を設定する。止め忘れを防ぐため、VM を作った直後に行う</td><td>インスタンススケジュール</td></tr>
+          <tr><td class="num">0-5</td><td>SSH で入り、VS Code の Remote SSH でつなぐ</td><td>OS Login、SSH config</td></tr>
+          <tr><td class="num">0-6</td><td>Docker、kubectl、kind を入れる。Kubernetes 1.37 以上のノードイメージが使えるか確認する</td><td>Docker Engine(Linux)、kind のリリース、kindest/node</td></tr>
+          <tr><td class="num">0-7</td><td><code>kind create cluster</code> が通ることを確認する</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>段階 1 で観察すること</h3>
+    <p class="info"><strong>用語の整理。</strong>Service は Pod の前に置く、仮想 IP(ClusterIP)を持つ入口で、実体は各ノードの kube-proxy が作る転送ルールです。Ingress は HTTP の振り分けルール(ホスト名やパス)を書くリソースで、動かすのは Ingress controller です。Istio の VirtualService は別物で、今回は扱いません。Ingress の次世代にあたる Gateway API は、段階 7 の agentgateway につながります。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="段階 1 の観察項目の表">
+      <table>
+        <thead><tr><th class="num">順</th><th>テーマ</th><th>観察すること</th><th>調べる用語</th></tr></thead>
+        <tbody>
+          <tr><td class="num">A</td><td class="key">Kind の正体</td><td><code>docker ps</code> で見えるノードと、<code>kubectl get nodes -o wide</code> の対応</td><td>kubeadm、containerd、kindest/node</td></tr>
+          <tr><td class="num">B</td><td class="key">コントロールプレーン</td><td><code>kube-system</code> の Pod が何で、どこで動くか。control-plane の設定ファイルが置かれる場所</td><td>kube-apiserver、etcd、scheduler、controller-manager、static Pod</td></tr>
+          <tr><td class="num">C</td><td class="key">Pod 作成の流れ</td><td>Pod を 1 つ作り、<code>describe</code> の Events で、スケジュール、取得、起動の順を追う</td><td>kubelet、watch、reconcile</td></tr>
+          <tr><td class="num">D</td><td class="key">ワーカ</td><td>ノードのコンテナに入り、kubelet と containerd を見る。worker のコンテナを止めたとき、Pod が何秒後にどうなるか</td><td>ノードの Ready、taint、eviction</td></tr>
+          <tr><td class="num">E</td><td class="key">Service</td><td>ClusterIP を作り、ノード内の転送ルールで実体を探す。CoreDNS で名前が引けること</td><td>kube-proxy、iptables、EndpointSlice、CoreDNS</td></tr>
+          <tr><td class="num">F</td><td class="key">Ingress</td><td>2 つのアプリを、パスで振り分ける</td><td>Ingress controller、IngressClass、<code>extraPortMappings</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>B〜D は、<strong>予想を書いてから実行し、結果と見比べる</strong>進め方にします。「止めたらどうなるか」を先に予想すると、仕組みが頭に残ります。</p>
+    <div class="cols">
+      <div>
+        <h3>Kind の設定で調べる点</h3>
+        <ul>
+          <li>ノードの <code>role</code> を並べて、control-plane 1 台と worker 3 台を指定する方法</li>
+          <li>ホストのポートをノードに通す <code>extraPortMappings</code></li>
+          <li>Ingress controller を載せるノードに付けるラベル(Kind の公式ドキュメントの Ingress の節)</li>
+        </ul>
+      </div>
+      <div>
+        <h3>成果物</h3>
+        <ul>
+          <li><code>docs/01-k8s-basics.md</code> に、control-plane と worker の図と各部品の役割を書く</li>
+          <li>Pod 作成の流れと、Service と Ingress の違いを、自分の言葉で書く</li>
+          <li>「予想と結果が違った点」を残す</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note"><strong>Ingress controller の選択は、着手時に決めます。</strong>以前よく使われた ingress-nginx は、メンテナンスが終わる発表があったはずですが、確認できていません。Kind の公式ドキュメントと各プロジェクトの現状を見て選びます。</p>
+  </section>
+
+  <section id="kagent1">
+    <h2>kagent 1.0 の前提</h2>
+    <p>公式の 1.0.0 リリースノートと、0.x からの移行手順で確認した内容です。0.x と同じ感覚では動かないので、設計に影響する点だけを挙げます。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="kagent 1.0 の前提の表">
+      <table>
+        <thead><tr><th>項目</th><th>1.0 での扱い</th><th>設計への影響</th></tr></thead>
+        <tbody>
+          <tr><td class="key">実行基盤</td><td>エージェントは Deployment ではなく、Agent Substrate 上のアクターとして動く。既定で gVisor のサンドボックス内</td><td>Substrate と WorkerPool を先に用意する(段階 6a)</td></tr>
+          <tr><td class="key">データベース</td><td>PostgreSQL が必須</td><td>Kind 内に PostgreSQL を置く。永続化の練習にもなる</td></tr>
+          <tr><td class="key">Kubernetes</td><td>移行手順に 1.37 以上のクラスタとある</td><td>Kind のノードイメージを確認する</td></tr>
+          <tr><td class="key">CRD</td><td>API グループが <code>api.kagent.dev</code> に変わり、Agent は AgentTemplate、Harness、Agent に分かれた</td><td>0.x 向けの記事や <code>kagent-training</code> は、そのままでは使えない</td></tr>
+          <tr><td class="key">MCP サーバ</td><td>kmcp と同梱の MCP サーバは廃止。kagent の外で動かし、RemoteMCPServer で指定する</td><td>ツール用の MCP サーバは自分で用意する</td></tr>
+          <tr><td class="key">アップグレード</td><td>0.x からの in-place 移行はなく、会話履歴も引き継がれない</td><td>最初から 1.0 で入れる</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note"><strong>成熟度の表記は情報源で食い違っています。</strong>公式サイトの一部は alpha、開発元のブログは GA と書いています。着手時に、最新のリリースノートを読み直します。</p>
+  </section>
+
+  <section id="arch">
+    <h2>全体構成</h2>
+    <p>Google Cloud の VM を 1 台用意し、その中で Kind を動かします。ノードは control-plane 1 台と worker 3 台の案です。worker-3 はエージェントの実行専用にします。</p>
+    <div class="fig">
+      <svg viewBox="0 0 760 392" role="img" aria-label="GCE VM の中に Kind クラスタがあり、control-plane 1 台と worker 3 台で構成される。worker-1 は API と Redis と PostgreSQL、worker-2 はワーカと vLLM、worker-3 はエージェント用で Substrate と kagent を載せる。">
+        <rect class="vm" x="4" y="4" width="752" height="384" rx="10"/>
+        <text class="t-head" x="20" y="28">GCE VM(Ubuntu・使うときだけ起動、夜間は自動停止)</text>
+        <rect class="cluster" x="20" y="44" width="720" height="332" rx="8"/>
+        <text class="t-mono" x="34" y="66">Kind クラスタ(Kubernetes 1.37 以上・各ノードは Docker コンテナ)</text>
+
+        <rect class="node" x="34" y="82" width="166" height="196" rx="6"/>
+        <text class="t-head" x="44" y="104">control-plane</text>
+        <rect class="pod" x="44" y="116" width="146" height="40" rx="4"/>
+        <text x="54" y="140">apiserver / etcd</text>
+        <rect class="pod" x="44" y="164" width="146" height="40" rx="4"/>
+        <text x="54" y="188">scheduler ほか</text>
+        <rect class="pod-hot" x="44" y="212" width="146" height="54" rx="4"/>
+        <text x="54" y="234">Ingress controller</text>
+        <text class="t-mono" x="54" y="252">ポートを公開</text>
+
+        <rect class="node" x="210" y="82" width="166" height="196" rx="6"/>
+        <text class="t-head" x="220" y="104">worker-1 アプリ</text>
+        <rect class="pod-hot" x="220" y="116" width="146" height="74" rx="4"/>
+        <text class="t-mono" x="230" y="134">ns: api</text>
+        <text x="230" y="156">API サーバ × 2</text>
+        <text class="t-muted" x="230" y="176" style="font-size:11px">ジョブを受け付ける</text>
+        <rect class="pod-hot" x="220" y="198" width="146" height="68" rx="4"/>
+        <text class="t-mono" x="230" y="216">ns: data</text>
+        <text x="230" y="238">Redis</text>
+        <text x="230" y="256">PostgreSQL</text>
+
+        <rect class="node" x="386" y="82" width="166" height="196" rx="6"/>
+        <text class="t-head" x="396" y="104">worker-2 推論</text>
+        <rect class="pod-hot" x="396" y="116" width="146" height="74" rx="4"/>
+        <text class="t-mono" x="406" y="134">ns: llm</text>
+        <text x="406" y="156">vLLM(CPU)</text>
+        <text class="t-muted" x="406" y="176" style="font-size:11px">小さいモデル + PVC</text>
+        <rect class="pod-hot" x="396" y="198" width="146" height="68" rx="4"/>
+        <text class="t-mono" x="406" y="216">ns: worker</text>
+        <text x="406" y="238">ワーカ × 2</text>
+        <text class="t-muted" x="406" y="256" style="font-size:11px">キューを処理</text>
+
+        <rect class="node" x="562" y="82" width="166" height="196" rx="6"/>
+        <text class="t-head" x="572" y="104">worker-3 エージェント</text>
+        <text class="t-warn" x="572" y="136">taint で専用にする案</text>
+        <rect class="pod-later" x="572" y="144" width="146" height="62" rx="4"/>
+        <text class="t-mono" x="582" y="162">ns: substrate</text>
+        <text x="582" y="182">Substrate</text>
+        <text x="582" y="198">WorkerPool</text>
+        <rect class="pod-later" x="572" y="214" width="146" height="54" rx="4"/>
+        <text class="t-mono" x="582" y="232">ns: kagent</text>
+        <text x="582" y="254">kagent 1.0</text>
+
+        <rect class="later" x="34" y="294" width="694" height="68" rx="6"/>
+        <text class="t-mono" x="48" y="316">後の段階で追加</text>
+        <text x="48" y="336">argocd ns(段階 5)　／　agentgateway ns(段階 7)</text>
+        <text class="t-muted" x="48" y="353" style="font-size:11px">どのノードに載せるかは、メモリ使用量を見て決める</text>
+      </svg>
+    </div>
+    <p class="cap">青い枠は段階 2〜3 で自分が手を動かす部分です。破線は後の段階で足す部分です。worker-3 の専用化は案で、まだ決めていません。</p>
+  </section>
+
+  <section id="flow">
+    <h2>通信の流れ</h2>
+    <h3>アプリ(段階 3)</h3>
+    <p>CPU の vLLM は遅いので、API は推論の完了を待ちません。受け付けてから後で結果を取りに来てもらう、非同期の形にします。</p>
+    <ol class="flow">
+      <li><b>投入</b>クライアントが API にプロンプトを送る。<span class="where">Ingress → api</span></li>
+      <li><b>受付</b>API はジョブ ID を発行して Redis に積み、すぐ ID を返す。<span class="where">api → data</span></li>
+      <li><b>取り出し</b>ワーカがキューからジョブを取り出す。<span class="where">worker ← data</span></li>
+      <li><b>推論</b>ワーカが vLLM の Service に問い合わせる。<span class="where">worker → llm</span></li>
+      <li><b>保存</b>ワーカが結果を Redis に書く。<span class="where">worker → data</span></li>
+      <li><b>取得</b>クライアントがジョブ ID で結果を取りに来る。<span class="where">Ingress → api → data</span></li>
+    </ol>
+    <h3>エージェント(段階 6〜7)</h3>
+    <p>kagent のセッションは、Substrate 上のアクターとして動きます。段階 7 で agentgateway を入れると、LLM への問い合わせがそこを通ります。</p>
+    <ol class="flow">
+      <li><b>会話</b>ユーザーが kagent のエージェントに話しかける。<span class="where">クライアント → kagent</span></li>
+      <li><b>セッション</b>セッションが作られ、サンドボックス内のアクターが動く。履歴は PostgreSQL に残る。<span class="where">kagent → substrate</span></li>
+      <li><b>LLM 呼び出し</b>エージェントが LLM に問い合わせる。ModelConfig の向き先が agentgateway になる。<span class="where">substrate → agentgateway</span></li>
+      <li><b>中継</b>agentgateway が vLLM に中継し、通信をログに残す。<span class="where">agentgateway → llm</span></li>
+      <li><b>ツール</b>ツールは kagent の外にある MCP サーバを呼ぶ。RemoteMCPServer で登録する。<span class="where">agentgateway → MCP サーバ</span></li>
+    </ol>
+  </section>
+
+  <section id="decisions">
+    <h2>設計判断と理由</h2>
+    <div class="scroll" tabindex="0" role="region" aria-label="設計判断の表">
+      <table>
+        <thead><tr><th>決めたこと</th><th>理由</th><th>検討した代替</th></tr></thead>
+        <tbody>
+          <tr><td class="key">最初から Kind を GCE の VM 1 台で動かす</td><td>Mac は Intel でメモリ 16GB のため、後の段階が動かない。環境を一つにそろえれば、途中で移行する手間がない。VM なら止めている間の課金がディスク代だけになる。</td><td>Mac で始めて途中で VM へ移る(環境が二つに分かれる)。GKE(常時課金のため不採用)。</td></tr>
+          <tr><td class="key">VM は小さく始め、必要になったら大きくする</td><td>段階 1 は軽く、16GB 前後で足りる見込み。メモリを使う段階の前に、停止中にマシンタイプを変えれば、無駄な課金を避けられる。</td><td>最初から 32GB や 64GB(簡単だが、使わない間も高い)。</td></tr>
+          <tr><td class="key">kagent は 1.0 を使う</td><td>OSS への貢献は、現行の main(1.x)が対象になる。0.10.x は 1.0 に置き換えられ、移行手順もない。</td><td>0.10.x で先に慣れる(軽いが、後でやり直しになる)。</td></tr>
+          <tr><td class="key">Substrate と PostgreSQL を kagent の前に入れる</td><td>1.0 の前提で、エージェントはこの上で動く。先に単体で動くことを確かめると、原因を切り分けやすい。</td><td>kagent と同時に導入(失敗したとき、どこが悪いか分からない)。</td></tr>
+          <tr><td class="key">worker を 3 台にする案</td><td>エージェント用のノードを taint で専用にすると、nodeSelector と toleration の練習になる。メモリも分散できる。</td><td>worker 2 台に同居(軽いが、配置の制御を学べない)。</td></tr>
+          <tr><td class="key">LLM の通信は agentgateway を通す</td><td>Gateway API に準拠していて、vLLM の登録手順が公式にある。通信のログと上限を一か所で見られる。</td><td>kagent から vLLM に直接(段階 6 で先に試す)。kgateway は使わない。</td></tr>
+          <tr><td class="key">API とワーカを Redis で分ける</td><td>推論が遅くても API が詰まらない。ワーカ数を増やす、Job にするなど、スケールの練習ができる。</td><td>API から vLLM を直接呼ぶ同期方式(単純だがタイムアウトしやすい)。</td></tr>
+          <tr><td class="key">namespace を役割で分ける</td><td>api、data、worker、llm などの単位が、そのまま RBAC、NetworkPolicy、ResourceQuota の練習単位になる。</td><td>default に全部(権限や通信の制御を学べない)。</td></tr>
+          <tr><td class="key">先に手書き、後で GitOps</td><td>先に <code>kubectl apply</code> で仕組みを理解してから Argo CD に任せると、自動化されていることが分かる。</td><td>最初から Argo CD(早いが中身が見えにくい)。</td></tr>
+          <tr><td class="key">バージョンは着手時に確認して固定</td><td>どの製品も更新が速い。推測せず、公式のリリース情報から決めて CLAUDE.md に記録する。</td><td>latest タグ(再現できなくなる)。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="stages">
+    <h2>段階と完了の目安</h2>
+    <p>順番に意味があるので、番号をそのまま使います。前の段階が動いてから次に進みます。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="段階の表">
+      <table>
+        <thead><tr><th class="num">段階</th><th>テーマ</th><th>完了の目安</th></tr></thead>
+        <tbody>
+          <tr><td class="num">0</td><td class="key">環境準備</td><td>VM に VS Code の Remote SSH でつながり、Docker、kind、kubectl、helm が動く。予算アラートと自動停止が設定されている。Kubernetes 1.37 以上のノードイメージが使えると確認できている。</td></tr>
+          <tr><td class="num">1</td><td class="key">K8s の基礎</td><td>control-plane 1 台と worker 3 台のクラスタができる。Pod 作成の流れ、worker を止めたときの挙動、Service と Ingress の違いを、自分の言葉で説明できる(<code>docs/01-k8s-basics.md</code>)。</td></tr>
+          <tr><td class="num">2</td><td class="key">vLLM をデプロイ</td><td>Pod が Ready になり、クラスタ内から問い合わせて応答が返る。</td></tr>
+          <tr><td class="num">3</td><td class="key">API とワーカ</td><td>ジョブを投入して、ID で結果を取得できる。ワーカを増やすと処理が分散する。</td></tr>
+          <tr><td class="num">4</td><td class="key">運用の理解</td><td>通信制限、権限、ローリングアップデート、ノード停止の実験を、それぞれ自分の言葉で説明できる。</td></tr>
+          <tr><td class="num">5</td><td class="key">Argo CD</td><td>段階 3 のアプリが Git の変更で自動的に反映される。</td></tr>
+          <tr><td class="num">6a</td><td class="key">PostgreSQL と Substrate</td><td>PostgreSQL が永続化つきで動く。Substrate が入り、WorkerPool 上で gVisor のサンドボックスが動く。動かない場合は、その原因を記録する。</td></tr>
+          <tr><td class="num">6b</td><td class="key">kagent 1.0</td><td>vLLM に直接つないだエージェントが応答する。セッションが Substrate 上で動いていることを確認できる。</td></tr>
+          <tr><td class="num">7</td><td class="key">agentgateway</td><td>ModelConfig の向き先を agentgateway に変え、LLM の通信がログで見える。続けて MCP サーバへの呼び出しも経由させる。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="risks">
+    <h2>リスクと、最初に確かめること</h2>
+    <p>kagent 1.0 まわりは新しく、資料も少ないので、動かないことを前提に確認の順番を決めておきます。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="リスクの表">
+      <table>
+        <thead><tr><th>リスク</th><th>確かめ方</th><th>だめだったとき</th></tr></thead>
+        <tbody>
+          <tr><td class="key">Kind の中で gVisor が動かない</td><td>段階 6a の最初に、WorkerPool でサンドボックスを 1 つ動かす。Kind のノードは Docker コンテナで、権限やカーネルの制約を受ける。</td><td>別の分離クラス(microvm)を調べる。VM 側の設定が必要になる可能性がある。解決しなければ、原因を記録して 0.10.x に切り替える。</td></tr>
+          <tr><td class="key">K8s 1.37 以上の Kind ノードイメージが無い</td><td>段階 0 で、Kind の最新版が対応するノードイメージを調べる。</td><td>対応版が出るまで、公式が許す範囲で下の版を試す。</td></tr>
+          <tr><td class="key">メモリが足りない</td><td>段階ごとに実測し、見積りを直す。</td><td>VM を 64GB 級に上げる。または使わない段階のものを止める。</td></tr>
+          <tr><td class="key">資料が少なく、情報が古い</td><td>公式ドキュメントとリリースノートを最優先にする。0.x 向けの記事は参考程度にする。</td><td>Issue を調べ、見つからなければ自分で書く。貢献の種になる。</td></tr>
+          <tr><td class="key">成熟度が alpha かもしれない</td><td>着手時に、リリースノートと GitHub のリリースページを確認する。</td><td>壊れる前提で、作り直せる手順(Makefile、README)を残す。</td></tr>
+          <tr><td class="key">使いたい Ingress controller が終了している</td><td>段階 1 の F で、Kind の公式ドキュメントと各プロジェクトの現状を確認する。</td><td>別の Ingress controller を選ぶ。または Gateway API の実装を入口にする。</td></tr>
+          <tr><td class="key">Ingress をインターネットに公開してしまう</td><td>ファイアウォールを開けないままにして、SSH のポート転送で確認する。</td><td>公開しない。開けてしまったら、すぐに閉じて設定を見直す。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="budget">
+    <h2>メモリの見積り(目安)</h2>
+    <p>VM の大きさを決めるための、ざっくりした見積りです。Substrate の数字は特に根拠が薄いので、実測して直します。全部が揃うのは段階 7 で、段階 1 は control-plane と worker だけなので軽く済みます。段階が進むごとに VM を大きくする前提です。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="メモリ見積りの表">
+      <table>
+        <thead><tr><th>構成要素</th><th class="num">目安</th><th>備考</th></tr></thead>
+        <tbody>
+          <tr><td class="key">Kind ノード 4 台</td><td class="num">3〜4 GB</td><td>control-plane 1 台と worker 3 台</td></tr>
+          <tr><td class="key">vLLM(CPU)</td><td class="num">6〜8 GB</td><td>小さいモデルを前提にしている</td></tr>
+          <tr><td class="key">PostgreSQL</td><td class="num">0.5〜1 GB</td><td>段階 6a から</td></tr>
+          <tr><td class="key">Agent Substrate</td><td class="num">2〜4 GB</td><td>コントローラと WorkerPool。根拠が薄い</td></tr>
+          <tr><td class="key">kagent 1.0</td><td class="num">1〜2 GB</td><td>段階 6b から</td></tr>
+          <tr><td class="key">agentgateway</td><td class="num">0.5〜1 GB</td><td>段階 7 から</td></tr>
+          <tr><td class="key">Argo CD</td><td class="num">1〜2 GB</td><td>段階 5 から</td></tr>
+          <tr><td class="key">API・ワーカ・Redis</td><td class="num">1 GB 未満</td><td></td></tr>
+          <tr><td class="key">OS と Docker</td><td class="num">2〜3 GB</td><td></td></tr>
+          <tr class="total"><td>合計</td><td class="num">16〜26 GB</td><td>32GB 級が最低ライン。余裕を見るなら 64GB 級を検討する</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="cost">
+    <h2>費用を抑える運用</h2>
+    <ul>
+      <li>使うときだけ起動する。停止中はディスク代だけが残る</li>
+      <li>夜間の自動停止(インスタンススケジュール)を設定して、止め忘れを防ぐ</li>
+      <li>予算アラートを先に設定する</li>
+      <li>外部 IP は固定せず、Cloud NAT は使わない</li>
+      <li>最初は通常の VM。慣れたらスポット VM を試す(突然止まることがある)</li>
+      <li>使わなくなったら VM とディスクを削除する</li>
+      <li>起動と停止を繰り返すと Kind が壊れることがある。作り直せるよう、クラスタ作成の手順を残しておく</li>
+      <li>最初は小さな VM で始め、メモリが必要になる段階で、停止中にマシンタイプを変更する。変更できる条件は、公式ドキュメントで確認する</li>
+    </ul>
+    <p class="note"><strong>VM の作成と課金に関わる設定は、内容を確認してから実行します。</strong>金額は、実際のマシンタイプとリージョンが決まってから料金計算ツールで見積もります。</p>
+  </section>
+
+  <section id="repo">
+    <h2>リポジトリとの対応</h2>
+    <div class="scroll" tabindex="0" role="region" aria-label="フォルダ対応の表">
+      <table>
+        <thead><tr><th>フォルダ</th><th>入れるもの</th><th class="num">段階</th></tr></thead>
+        <tbody>
+          <tr><td class="key mono">cluster/</td><td>Kind の設定(worker 3 台)、作成・削除の手順</td><td class="num">1</td></tr>
+          <tr><td class="key mono">apps/api, apps/worker</td><td>アプリのコードと Dockerfile</td><td class="num">3</td></tr>
+          <tr><td class="key mono">manifests/10-vllm</td><td>vLLM の Deployment、Service、PVC</td><td class="num">2</td></tr>
+          <tr><td class="key mono">manifests/20-api, 30-worker, 40-queue</td><td>API、ワーカ、Redis のマニフェスト</td><td class="num">3</td></tr>
+          <tr><td class="key mono">manifests/90-policy</td><td>NetworkPolicy、RBAC、ResourceQuota</td><td class="num">4</td></tr>
+          <tr><td class="key mono">gitops/argocd, gitops/apps</td><td>Argo CD の設定と Application</td><td class="num">5</td></tr>
+          <tr><td class="key mono">gitops/substrate(新規)</td><td>PostgreSQL、Substrate、WorkerPool</td><td class="num">6a</td></tr>
+          <tr><td class="key mono">gitops/kagent</td><td>kagent 1.0 の Helm values、ModelConfig、Agent</td><td class="num">6b</td></tr>
+          <tr><td class="key mono">gitops/agentgateway(新規)</td><td>agentgateway の設定、バックエンド、ルート</td><td class="num">7</td></tr>
+          <tr><td class="key mono">docs/00-vm-setup.md</td><td>VM の手順書(決めたこと、実行した手順、つまずき)</td><td class="num">0</td></tr>
+          <tr><td class="key mono">docs/01-k8s-basics.md</td><td>control-plane、worker、Service、Ingress の学習ノート</td><td class="num">1</td></tr>
+          <tr><td class="key mono">docs/</td><td>以降の段階ごとの学習ノート</td><td class="num">2〜</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="cap">「新規」のフォルダは、まだ作っていません。着手時に足します。</p>
+  </section>
+
+  <section id="open">
+    <h2>まだ決めていないこと</h2>
+    <div class="cols">
+      <div>
+        <h3>確認が必要</h3>
+        <ul>
+          <li>Kind の最新版が、Kubernetes 1.37 以上のノードイメージに対応しているか</li>
+          <li>段階 1 で使う Ingress controller と、その現状(メンテナンスが続いているか)</li>
+          <li>gVisor のサンドボックスが、Kind(Docker のノード)の中で動くか</li>
+          <li>vLLM の CPU 版が、VM(x86_64)で問題なく動くか。使うモデルは何か</li>
+          <li>kagent 1.0 が OpenAI 互換のエンドポイント(vLLM、agentgateway)につなげるか</li>
+          <li>kagent、Substrate、agentgateway の最新バージョンと、互いの対応</li>
+        </ul>
+      </div>
+      <div>
+        <h3>自分で決める</h3>
+        <ul>
+          <li>worker を 3 台にして、エージェント用を専用にするか</li>
+          <li>API とワーカの言語と、ワーカにさせる処理(要約、分類など)</li>
+          <li>段階 7 で呼ばせる、ツール用の MCP サーバの題材</li>
+          <li>Argo CD が見るリポジトリを公開にするか、認証つきの非公開にするか</li>
+          <li>VM のリージョンとマシンタイプ(最初は 16GB 前後。後で 32GB か 64GB か)、自動停止の時刻</li>
+          <li>VM の操作を、コンソールで行うか gcloud で行うか</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>次の一手は段階 0 です。マシン、リージョン、接続方法を決めてから VM を作ります。決めたことと手順は <code>docs/00-vm-setup.md</code> に書き、一緒にレビューします。段階 6a の gVisor の確認は、早めに試せるよう、段階 1 のあとに小さく試す手もあります。</footer>
+</main>
