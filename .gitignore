@@ -15,6 +15,21 @@ kubeconfig
 .idea/
 .vscode/
 
+# Terraform（状態ファイルには請求アカウント ID などが入るため、コミットしない）
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
 # 一時ファイル
 tmp/
 *.log
