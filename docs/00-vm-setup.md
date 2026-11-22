@@ -16,7 +16,8 @@ Google Cloud に、専用の VPC と VM 3 台を、Terraform で作る。VM の�
 - [x] Mac に gcloud と Terraform を入れた
 - [x] `gcloud auth login` を済ませた
 - [x] GCP のプロジェクトを作った（組織の下）。請求を紐付けた
-- [ ] `gcloud auth application-default login`（Terraform が使う認証）
+- [x] `gcloud auth application-default login`（Terraform が使う認証）
+- [x] tfstate 用の GCS バケットを、手作業（gcloud）で作った（東京、非公開、バージョニング有効）。バケット名は、`terraform/*/backend.hcl`（コミットしない）にある
 - [ ] 予算アラート（見送り中。作るときは、Terraform で）
 
 > 公開するもの（このリポジトリ、ブログ）に、プロジェクト ID、請求アカウント ID、組織 ID、メールアドレス、IP アドレスを書かない。
@@ -32,10 +33,10 @@ Google Cloud に、専用の VPC と VM 3 台を、Terraform で作る。VM の�
 | サブネット | 2 つに分ける。control-plane 用 `10.10.0.0/27`、worker 用 `10.10.0.32/27` | |
 | 外へ出る方法 | Cloud NAT（VM に外部 IP は付けない） | |
 | SSH | IAP 経由だけ | |
-| マシンタイプ（ノードごと。最初は小さく） | | |
-| リージョン・ゾーン（3 台とも同じゾーン） | | |
+| マシンタイプ（ノードごと。最初は小さく） | 各ノード 2 vCPU / 4 GB 前後から始める。具体的なタイプは未定 | |
+| リージョン・ゾーン（3 台とも同じゾーン） | リージョンは東京（`asia-northeast1`）。ゾーンは `asia-northeast1-a`（3 台とも同じ） | |
 | OS（Ubuntu の LTS、x86_64） | | |
-| ディスクの種類とサイズ（ノードごと） | | |
+| ディスクの種類とサイズ（ノードごと） | サイズの目安: control-plane 20〜30 GB、worker-1 30〜50 GB、worker-2 50〜100 GB（最初は小さく作り、増やすときは後から増やす。減らせない）。種類は未定 | OS、etcd、コンテナのイメージ。worker-2 は vLLM のイメージとモデルが大きい |
 | 内部 IP を予約するか | | |
 | 自動停止の時刻 | | |
 | スポット VM を使うか（最初は通常の VM） | | |
