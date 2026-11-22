@@ -1,0 +1,2 @@
+# 見本。コピーして backend.hcl を作り、実値を書く（backend.hcl はコミットしない）。
+bucket = "your-tfstate-bucket-name"

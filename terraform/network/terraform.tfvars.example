@@ -1,0 +1,2 @@
+# 見本。コピーして terraform.tfvars を作り、実値を書く（terraform.tfvars はコミットしない）。
+project_id = "your-gcp-project-id"

@@ -29,6 +29,8 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+# バケット名などの実値を渡すファイル（.terraform.lock.hcl はコミットするので、*.hcl とは書かない）
+backend.hcl
 
 # 一時ファイル
 tmp/
