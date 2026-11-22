@@ -126,11 +126,11 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
 
 <main>
   <header style="display:flex;flex-direction:column;gap:14px;">
-    <div class="eyebrow">k8s-kind-lab / design v3</div>
+    <div class="eyebrow">k8s-kind-lab / design v5</div>
     <h1>Kind で K8s を一通り学ぶ。設計方針</h1>
     <p class="lede">API サーバとワーカ、CPU の vLLM を Kind に載せて K8s を学ぶ。その先で Argo CD、Agent Substrate、kagent 1.0、agentgateway を動かし、kagent の OSS 活動につなげる。</p>
     <div class="meta"><span>2026-11-21 更新</span><span>学習用リポジトリ</span><span>方針の段階。コードは未着手</span></div>
-    <p class="info"><strong>v3 での変更。</strong>最初から Google Cloud の VM で Kind を動かす前提にし、段階 0(VM を整える)と段階 1(control-plane、worker、Service、Ingress の観察)の進め方を追加しました。<br><strong>v2 での変更。</strong>kagent は 1.0 を使います。1.0 は Agent Substrate、PostgreSQL、Kubernetes 1.37 以上を前提にするため、段階 6 を二つに分け、worker を 3 台に増やす案を入れました。</p>
+    <p class="info"><strong>v5 での変更。</strong>Terraform を、段階 0b として追加しました。予算アラートを VM の前に Terraform で作り、手で作った VM を Terraform で再現します。GCP のプロジェクトは作成済み(組織の下)で、gcloud と Terraform も Mac に入れてあります。<br><strong>v4 での変更。</strong>Ingress で入口の基本を学んだあと、Istio に移行する段階 4b を追加しました。<br><strong>v3 での変更。</strong>最初から Google Cloud の VM で Kind を動かす前提にし、段階 0(VM を整える)と段階 1(control-plane、worker、Service、Ingress の観察)の進め方を追加しました。<br><strong>v2 での変更。</strong>kagent は 1.0 を使います。1.0 は Agent Substrate、PostgreSQL、Kubernetes 1.37 以上を前提にするため、段階 6 を二つに分け、worker を 3 台に増やす案を入れました。</p>
     <p class="note"><strong>このページは設計の考え方だけを書いています。</strong>マニフェストとアプリのコードは自分で書き、詰まったらヒントとレビューをもらう進め方です。数値の見積りは目安で、実測してから直します。</p>
   </header>
 
@@ -141,6 +141,8 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
         <h3>目的</h3>
         <ul>
           <li>Pod、Service、Ingress、Job、HPA、NetworkPolicy、RBAC を手で触って理解する</li>
+          <li>Terraform で、予算アラートと VM をコードにして、作り直せるようにする</li>
+          <li>Ingress で入口の基本を理解したあと、Istio に移行して、違いを説明できるようにする</li>
           <li>Git を正とするデプロイ(Argo CD)に移行し、違いを体感する</li>
           <li>kagent 1.0 が、K8s の上でどう動くのかを理解する</li>
           <li>agentgateway で、エージェントの通信を一か所に通す</li>
@@ -182,8 +184,8 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
       <table>
         <thead><tr><th class="num">順</th><th>やること</th><th>調べる用語</th></tr></thead>
         <tbody>
-          <tr><td class="num">0-1</td><td>GCP のプロジェクトと請求を確認し、<strong>予算アラートを先に設定する</strong></td><td>Budgets &amp; alerts</td></tr>
-          <tr><td class="num">0-2</td><td>Mac に gcloud を入れ、ログインする(ログインは自分で行う)</td><td>gcloud CLI</td></tr>
+          <tr><td class="num">0-1</td><td>GCP のプロジェクト(作成済み。組織の下)と請求を確認し、<strong>予算アラートを、VM より先に Terraform で作る</strong>(段階 0b)</td><td>Budgets &amp; alerts、google_billing_budget</td></tr>
+          <tr><td class="num">0-2</td><td>Mac に gcloud と Terraform を入れ、ログインする。<code>gcloud auth login</code> と <code>gcloud auth application-default login</code>。ログインは自分で行う</td><td>gcloud CLI、ADC</td></tr>
           <tr><td class="num">0-3</td><td>VM を作る。コンソールでも gcloud でもよい</td><td>Compute Engine、マシンタイプ、起動ディスク</td></tr>
           <tr><td class="num">0-4</td><td><strong>自動停止のスケジュール</strong>を設定する。止め忘れを防ぐため、VM を作った直後に行う</td><td>インスタンススケジュール</td></tr>
           <tr><td class="num">0-5</td><td>SSH で入り、VS Code の Remote SSH でつなぐ</td><td>OS Login、SSH config</td></tr>
@@ -194,7 +196,7 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
     </div>
 
     <h3>段階 1 で観察すること</h3>
-    <p class="info"><strong>用語の整理。</strong>Service は Pod の前に置く、仮想 IP(ClusterIP)を持つ入口で、実体は各ノードの kube-proxy が作る転送ルールです。Ingress は HTTP の振り分けルール(ホスト名やパス)を書くリソースで、動かすのは Ingress controller です。Istio の VirtualService は別物で、今回は扱いません。Ingress の次世代にあたる Gateway API は、段階 7 の agentgateway につながります。</p>
+    <p class="info"><strong>用語の整理。</strong>Service は Pod の前に置く、仮想 IP(ClusterIP)を持つ入口で、実体は各ノードの kube-proxy が作る転送ルールです。Ingress は HTTP の振り分けルール(ホスト名やパス)を書くリソースで、動かすのは Ingress controller です。Istio の Gateway と VirtualService は、段階 4b で、Ingress と比べながら扱います。Ingress の次世代にあたる Gateway API は、段階 7 の agentgateway につながります。</p>
     <div class="scroll" tabindex="0" role="region" aria-label="段階 1 の観察項目の表">
       <table>
         <thead><tr><th class="num">順</th><th>テーマ</th><th>観察すること</th><th>調べる用語</th></tr></thead>
@@ -349,6 +351,8 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
           <tr><td class="key">API とワーカを Redis で分ける</td><td>推論が遅くても API が詰まらない。ワーカ数を増やす、Job にするなど、スケールの練習ができる。</td><td>API から vLLM を直接呼ぶ同期方式(単純だがタイムアウトしやすい)。</td></tr>
           <tr><td class="key">namespace を役割で分ける</td><td>api、data、worker、llm などの単位が、そのまま RBAC、NetworkPolicy、ResourceQuota の練習単位になる。</td><td>default に全部(権限や通信の制御を学べない)。</td></tr>
           <tr><td class="key">先に手書き、後で GitOps</td><td>先に <code>kubectl apply</code> で仕組みを理解してから Argo CD に任せると、自動化されていることが分かる。</td><td>最初から Argo CD(早いが中身が見えにくい)。</td></tr>
+          <tr><td class="key">Ingress を学んでから Istio に移る</td><td>段階 1 は素の K8s の動きを見たい。最初から Istio を入れると、Pod の中に proxy が入り、通信が書き換わって、基礎が見えにくくなる。同じ入口を後で置き換えると、違いがはっきり分かる。</td><td>最初から Istio(重く、基礎が見えにくい)。Istio は扱わない。</td></tr>
+          <tr><td class="key">予算アラートと VM の再現は Terraform で行う</td><td>課金が発生せず、失敗しても安全な題材で Terraform を学べる。VM を手で作ってから再現すると、何を設定したかが分かる。壊しても作り直せる、という方針にも合う。</td><td>コンソールだけで設定する(簡単だが、再現できない)。</td></tr>
           <tr><td class="key">バージョンは着手時に確認して固定</td><td>どの製品も更新が速い。推測せず、公式のリリース情報から決めて CLAUDE.md に記録する。</td><td>latest タグ(再現できなくなる)。</td></tr>
         </tbody>
       </table>
@@ -363,10 +367,12 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
         <thead><tr><th class="num">段階</th><th>テーマ</th><th>完了の目安</th></tr></thead>
         <tbody>
           <tr><td class="num">0</td><td class="key">環境準備</td><td>VM に VS Code の Remote SSH でつながり、Docker、kind、kubectl、helm が動く。予算アラートと自動停止が設定されている。Kubernetes 1.37 以上のノードイメージが使えると確認できている。</td></tr>
+          <tr><td class="num">0b</td><td class="key">Terraform</td><td>Terraform で予算アラートを作れる(<code>plan</code> の結果を読んでから <code>apply</code> する)。手で作った VM を Terraform で再現し、消して作り直せる。状態ファイルをコミットしていない。</td></tr>
           <tr><td class="num">1</td><td class="key">K8s の基礎</td><td>control-plane 1 台と worker 3 台のクラスタができる。Pod 作成の流れ、worker を止めたときの挙動、Service と Ingress の違いを、自分の言葉で説明できる(<code>docs/01-k8s-basics.md</code>)。</td></tr>
           <tr><td class="num">2</td><td class="key">vLLM をデプロイ</td><td>Pod が Ready になり、クラスタ内から問い合わせて応答が返る。</td></tr>
           <tr><td class="num">3</td><td class="key">API とワーカ</td><td>ジョブを投入して、ID で結果を取得できる。ワーカを増やすと処理が分散する。</td></tr>
           <tr><td class="num">4</td><td class="key">運用の理解</td><td>通信制限、権限、ローリングアップデート、ノード停止の実験を、それぞれ自分の言葉で説明できる。</td></tr>
+          <tr><td class="num">4b</td><td class="key">Istio(Ingress から移行)</td><td>段階 3 の API の入口を、Ingress から Istio の Gateway と VirtualService に移せる。Ingress との違い(メッシュ内の通信、mTLS、トラフィックの分割)を、自分の言葉で説明できる。</td></tr>
           <tr><td class="num">5</td><td class="key">Argo CD</td><td>段階 3 のアプリが Git の変更で自動的に反映される。</td></tr>
           <tr><td class="num">6a</td><td class="key">PostgreSQL と Substrate</td><td>PostgreSQL が永続化つきで動く。Substrate が入り、WorkerPool 上で gVisor のサンドボックスが動く。動かない場合は、その原因を記録する。</td></tr>
           <tr><td class="num">6b</td><td class="key">kagent 1.0</td><td>vLLM に直接つないだエージェントが応答する。セッションが Substrate 上で動いていることを確認できる。</td></tr>
@@ -390,6 +396,9 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
           <tr><td class="key">成熟度が alpha かもしれない</td><td>着手時に、リリースノートと GitHub のリリースページを確認する。</td><td>壊れる前提で、作り直せる手順(Makefile、README)を残す。</td></tr>
           <tr><td class="key">使いたい Ingress controller が終了している</td><td>段階 1 の F で、Kind の公式ドキュメントと各プロジェクトの現状を確認する。</td><td>別の Ingress controller を選ぶ。または Gateway API の実装を入口にする。</td></tr>
           <tr><td class="key">Ingress をインターネットに公開してしまう</td><td>ファイアウォールを開けないままにして、SSH のポート転送で確認する。</td><td>公開しない。開けてしまったら、すぐに閉じて設定を見直す。</td></tr>
+          <tr><td class="key">Istio と agentgateway で、入口の役割が重なる</td><td>どちらも Gateway API を扱える。段階 4b で Istio の入口を作る前に、GatewayClass で担当を分ける方法を調べる。</td><td>段階 7 の前に、Istio の入口を片付ける。または、Istio は一部の namespace だけに限る。</td></tr>
+          <tr><td class="key">Istio のモードの選択で迷う</td><td>sidecar 方式と ambient 方式がある。着手時に、公式ドキュメントで現在の推奨と、kagent 1.0(Substrate、gVisor)との相性を調べる。</td><td>通信の仕組みを学ぶ目的に合う方を選ぶ。合わなければ、対象の namespace を絞る。</td></tr>
+          <tr><td class="key">Terraform の状態ファイルをコミットしてしまう</td><td>状態ファイルには、請求アカウント ID などが入る。<code>.gitignore</code> に、<code>*.tfstate</code>、<code>.terraform/</code>、<code>*.tfvars</code> を入れてある。コミット前に <code>git status</code> で確認する。</td><td>気づいたら、履歴から消す方法を調べる。公開前なら、履歴ごと作り直す。</td></tr>
         </tbody>
       </table>
     </div>
@@ -410,8 +419,9 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
           <tr><td class="key">agentgateway</td><td class="num">0.5〜1 GB</td><td>段階 7 から</td></tr>
           <tr><td class="key">Argo CD</td><td class="num">1〜2 GB</td><td>段階 5 から</td></tr>
           <tr><td class="key">API・ワーカ・Redis</td><td class="num">1 GB 未満</td><td></td></tr>
+          <tr><td class="key">Istio</td><td class="num">1〜2 GB</td><td>istiod と入口。段階 4b から。根拠が薄い</td></tr>
           <tr><td class="key">OS と Docker</td><td class="num">2〜3 GB</td><td></td></tr>
-          <tr class="total"><td>合計</td><td class="num">16〜26 GB</td><td>32GB 級が最低ライン。余裕を見るなら 64GB 級を検討する</td></tr>
+          <tr class="total"><td>合計</td><td class="num">17〜28 GB</td><td>32GB 級が最低ライン。余裕を見るなら 64GB 級を検討する</td></tr>
         </tbody>
       </table>
     </div>
@@ -422,7 +432,7 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
     <ul>
       <li>使うときだけ起動する。停止中はディスク代だけが残る</li>
       <li>夜間の自動停止(インスタンススケジュール)を設定して、止め忘れを防ぐ</li>
-      <li>予算アラートを先に設定する</li>
+      <li>予算アラートを、VM より先に、Terraform で作る。アラートは通知だけで、上限に達しても課金は止まらない</li>
       <li>外部 IP は固定せず、Cloud NAT は使わない</li>
       <li>最初は通常の VM。慣れたらスポット VM を試す(突然止まることがある)</li>
       <li>使わなくなったら VM とディスクを削除する</li>
@@ -438,11 +448,14 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
       <table>
         <thead><tr><th>フォルダ</th><th>入れるもの</th><th class="num">段階</th></tr></thead>
         <tbody>
+          <tr><td class="key mono">terraform/budget(新規)</td><td>予算アラート(<code>google_billing_budget</code>)。VM より先に作る</td><td class="num">0b</td></tr>
+          <tr><td class="key mono">terraform/vm(新規)</td><td>手で作った VM の再現。状態ファイルはコミットしない</td><td class="num">0b</td></tr>
           <tr><td class="key mono">cluster/</td><td>Kind の設定(worker 3 台)、作成・削除の手順</td><td class="num">1</td></tr>
           <tr><td class="key mono">apps/api, apps/worker</td><td>アプリのコードと Dockerfile</td><td class="num">3</td></tr>
           <tr><td class="key mono">manifests/10-vllm</td><td>vLLM の Deployment、Service、PVC</td><td class="num">2</td></tr>
           <tr><td class="key mono">manifests/20-api, 30-worker, 40-queue</td><td>API、ワーカ、Redis のマニフェスト</td><td class="num">3</td></tr>
           <tr><td class="key mono">manifests/90-policy</td><td>NetworkPolicy、RBAC、ResourceQuota</td><td class="num">4</td></tr>
+          <tr><td class="key mono">manifests/50-istio(新規)</td><td>Istio の入口(Gateway、VirtualService)。Ingress との比較ノート</td><td class="num">4b</td></tr>
           <tr><td class="key mono">gitops/argocd, gitops/apps</td><td>Argo CD の設定と Application</td><td class="num">5</td></tr>
           <tr><td class="key mono">gitops/substrate(新規)</td><td>PostgreSQL、Substrate、WorkerPool</td><td class="num">6a</td></tr>
           <tr><td class="key mono">gitops/kagent</td><td>kagent 1.0 の Helm values、ModelConfig、Agent</td><td class="num">6b</td></tr>
@@ -464,6 +477,8 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
         <ul>
           <li>Kind の最新版が、Kubernetes 1.37 以上のノードイメージに対応しているか</li>
           <li>段階 1 で使う Ingress controller と、その現状(メンテナンスが続いているか)</li>
+          <li>Istio のモード(sidecar か ambient か)、バージョン、Kubernetes 1.37 以上での対応</li>
+          <li>Istio と agentgateway の分担(どちらが入口を持つか)</li>
           <li>gVisor のサンドボックスが、Kind(Docker のノード)の中で動くか</li>
           <li>vLLM の CPU 版が、VM(x86_64)で問題なく動くか。使うモデルは何か</li>
           <li>kagent 1.0 が OpenAI 互換のエンドポイント(vLLM、agentgateway)につなげるか</li>
@@ -478,11 +493,12 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
           <li>段階 7 で呼ばせる、ツール用の MCP サーバの題材</li>
           <li>Argo CD が見るリポジトリを公開にするか、認証つきの非公開にするか</li>
           <li>VM のリージョンとマシンタイプ(最初は 16GB 前後。後で 32GB か 64GB か)、自動停止の時刻</li>
-          <li>VM の操作を、コンソールで行うか gcloud で行うか</li>
+          <li>VM を最初に作るとき、コンソールと gcloud のどちらで行うか(そのあと Terraform で再現する)</li>
+          <li>予算の金額としきい値(請求アカウントの通貨に合わせる)</li>
         </ul>
       </div>
     </div>
   </section>
 
-  <footer>次の一手は段階 0 です。マシン、リージョン、接続方法を決めてから VM を作ります。決めたことと手順は <code>docs/00-vm-setup.md</code> に書き、一緒にレビューします。段階 6a の gVisor の確認は、早めに試せるよう、段階 1 のあとに小さく試す手もあります。</footer>
+  <footer>次の一手は段階 0 です。<code>gcloud auth application-default login</code> でログインし、予算アラートを Terraform で作ります。そのあと、マシン、リージョン、接続方法を決めて VM を作ります。決めたことと手順は <code>docs/00-vm-setup.md</code> に書き、一緒にレビューします。段階 6a の gVisor の確認は、早めに試せるよう、段階 1 のあとに小さく試す手もあります。</footer>
 </main>
