@@ -1,6 +1,6 @@
 # k8s-kind-lab ルール
 
-Kind で K8s を学ぶ学習用リポジトリ。`~/Dev/study/CLAUDE.md` の「学習優先」ルールに従う。
+Google Cloud の VM に kubeadm で K8s を作って学ぶ学習用リポジトリ（Terraform で作る。Kind は使わない）。`~/Dev/study/CLAUDE.md` の「学習優先」ルールに従う。
 
 ## 進め方
 - 完成したマニフェストやコードを、いきなり書かない。意図の整理 → ヒント → 私のコードへのレビューの順で支援する
@@ -9,7 +9,9 @@ Kind で K8s を学ぶ学習用リポジトリ。`~/Dev/study/CLAUDE.md` の「�
 
 ## 固定するバージョン（着手時に調べて記入する）
 - Kubernetes: 1.37 以上（kagent 1.0 の前提。kindest/node のタグは未確認）
-- Kind: 未定
+- kubeadm、kubelet、kubectl: 未定（Kubernetes と同じ版にそろえる）
+- containerd: 未定
+- CNI: 未定（Flannel、Calico、Cilium などから選ぶ）
 - Terraform: 1.17.2（2026-11-22 に Mac へ導入。公式の SHA256 を照合済み）
 - gcloud: 594.0.0（2026-11-22 に Mac へ導入）
 - Argo CD: 未定
@@ -29,3 +31,4 @@ Kind で K8s を学ぶ学習用リポジトリ。`~/Dev/study/CLAUDE.md` の「�
 - `gcloud projects delete`、`terraform apply`、`terraform destroy` の前に、対象と内容を確認する。`apply` の前は `plan` の結果を一緒に読む
 - Terraform の状態ファイル（`*.tfstate`）と `*.tfvars` は、コミットしない・読まない
 - 公開リポジトリには、GCP のプロジェクト ID、請求アカウント ID、メールアドレスを書かない
+- 学んだことは `~/Dev/zenn` のブログ記事にする。記事には、実値（ID、メールアドレス、IP）を書かない。記事を書くときは、Zenn 側の `CLAUDE.md` に従う（下書きは `published: false`、事実は公式ドキュメントで確認、`git push` は承認を得てから）

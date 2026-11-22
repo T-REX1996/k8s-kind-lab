@@ -7,7 +7,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;700&display=swap">
 <style>
-/* Layout: 1 column reading page, one wide architecture figure, tables for decisions, stages, budget and risks */
+/* Layout: 1 column reading page, one wide architecture figure, tables for decisions, stages, risks and budget */
 :root {
   --bg: #f7f8fa;
   --surface: #ffffff;
@@ -104,8 +104,9 @@ svg .pod { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
 svg .pod-hot { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
 svg .pod-later { fill: var(--surface); stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
 svg .later { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
-svg .taint { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1; }
 svg .t-warn { fill: var(--warn); font-family: var(--font-mono); font-size: 10.5px; }
+svg .line { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+svg .arrow { fill: var(--muted); }
 
 /* flows */
 .flow { list-style: none; padding: 0; max-width: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; counter-reset: step; }
@@ -126,12 +127,12 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
 
 <main>
   <header style="display:flex;flex-direction:column;gap:14px;">
-    <div class="eyebrow">k8s-kind-lab / design v5</div>
-    <h1>Kind で K8s を一通り学ぶ。設計方針</h1>
-    <p class="lede">API サーバとワーカ、CPU の vLLM を Kind に載せて K8s を学ぶ。その先で Argo CD、Agent Substrate、kagent 1.0、agentgateway を動かし、kagent の OSS 活動につなげる。</p>
-    <div class="meta"><span>2026-11-21 更新</span><span>学習用リポジトリ</span><span>方針の段階。コードは未着手</span></div>
-    <p class="info"><strong>v5 での変更。</strong>Terraform を、段階 0b として追加しました。予算アラートを VM の前に Terraform で作り、手で作った VM を Terraform で再現します。GCP のプロジェクトは作成済み(組織の下)で、gcloud と Terraform も Mac に入れてあります。<br><strong>v4 での変更。</strong>Ingress で入口の基本を学んだあと、Istio に移行する段階 4b を追加しました。<br><strong>v3 での変更。</strong>最初から Google Cloud の VM で Kind を動かす前提にし、段階 0(VM を整える)と段階 1(control-plane、worker、Service、Ingress の観察)の進め方を追加しました。<br><strong>v2 での変更。</strong>kagent は 1.0 を使います。1.0 は Agent Substrate、PostgreSQL、Kubernetes 1.37 以上を前提にするため、段階 6 を二つに分け、worker を 3 台に増やす案を入れました。</p>
-    <p class="note"><strong>このページは設計の考え方だけを書いています。</strong>マニフェストとアプリのコードは自分で書き、詰まったらヒントとレビューをもらう進め方です。数値の見積りは目安で、実測してから直します。</p>
+    <div class="eyebrow">k8s-kind-lab / design v8</div>
+    <h1>kubeadm で K8s を一通り学ぶ。設計方針</h1>
+    <p class="lede">Google Cloud の VM 3 台に kubeadm で K8s のクラスタを作り、API サーバとワーカ、CPU の vLLM を載せて学ぶ。その先で Istio、Argo CD、Agent Substrate、kagent 1.0、agentgateway を動かし、kagent の OSS 活動と、Zenn の記事につなげる。</p>
+    <div class="meta"><span>2026-11-22 更新</span><span>学習用リポジトリ</span><span>方針の段階。コードは未着手</span></div>
+    <p class="info"><strong>v8 での変更。</strong>サブネットを 2 つに分けました。control-plane 用が <code>10.10.0.0/27</code>、worker 用が <code>10.10.0.32/27</code> です。3 台とも同じゾーンに置き、Cloud NAT は両方のサブネットを対象にします。<br><strong>v7 での変更。</strong>クラスタを Kind から kubeadm に変え、本物の VM 3 台(control-plane 1 台と worker 2 台)にしました。外へ出る方法は Cloud NAT で、VM に外部 IP は付けません。学んだことは、Zenn の記事にします。<br><strong>v2〜v6 の変更。</strong>kagent 1.0 の前提、Terraform、Istio、ネットワーク構成を追加しました。</p>
+    <p class="note"><strong>このページは設計の考え方だけを書いています。</strong>マニフェストとアプリのコードは自分で書き、詰まったらヒントとレビューをもらう進め方です。数値の見積りは目安で、実測してから直します。リポジトリ名は <code>k8s-kind-lab</code> のままで、kubeadm に合わせて変えるかは、まだ決めていません。</p>
   </header>
 
   <section id="goal">
@@ -140,177 +141,210 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
       <div>
         <h3>目的</h3>
         <ul>
+          <li>kubeadm でクラスタを作り、control-plane と worker の仕組みを理解する</li>
           <li>Pod、Service、Ingress、Job、HPA、NetworkPolicy、RBAC を手で触って理解する</li>
-          <li>Terraform で、予算アラートと VM をコードにして、作り直せるようにする</li>
+          <li>Terraform で、ネットワークと VM をコードにして、作り直せるようにする</li>
           <li>Ingress で入口の基本を理解したあと、Istio に移行して、違いを説明できるようにする</li>
           <li>Git を正とするデプロイ(Argo CD)に移行し、違いを体感する</li>
-          <li>kagent 1.0 が、K8s の上でどう動くのかを理解する</li>
+          <li>kagent 1.0 が K8s の上でどう動くのかを理解する</li>
           <li>agentgateway で、エージェントの通信を一か所に通す</li>
-          <li>kagent の OSS に、小さな貢献をする足場を作る</li>
+          <li>kagent の OSS に小さな貢献をする足場を作り、学んだことを Zenn の記事にする</li>
         </ul>
       </div>
       <div>
         <h3>制約</h3>
         <ul>
-          <li>手元の Mac は Intel i5、メモリ 16GB。全部同時に動かすには足りない</li>
+          <li>手元の Mac は Intel i5、メモリ 16GB。複数ノードのクラスタは動かせない</li>
           <li>GKE の常時課金は避ける。GPU は使わない</li>
           <li>外部の LLM API は使わない。推論はクラスタ内の vLLM(CPU)</li>
-          <li>kagent 1.0 の前提で、Kubernetes は 1.37 以上。Kind のノードイメージは着手時に確認する</li>
+          <li>kagent 1.0 の前提で、Kubernetes は 1.37 以上。パッケージの提供状況は、着手時に確認する</li>
+          <li>予算アラートは、今は見送り。止め忘れを自動停止で防ぐ</li>
         </ul>
       </div>
     </div>
   </section>
 
   <section id="start">
-    <h2>最初の一歩。段階 0 と 1</h2>
-    <p>最初から Google Cloud の VM で Kind を動かします。まず VM を整え(段階 0)、次に control-plane と worker の仕組み、Service、Ingress を観察して理解します(段階 1)。環境を一つにそろえておくと、後の段階で移行する手間がありません。</p>
+    <h2>最初の一歩。段階 0、0b、1</h2>
+    <p>最初から Google Cloud の VM で作ります。まず Terraform でネットワークと VM 3 台を作り(段階 0 と 0b)、次に kubeadm でクラスタを作って仕組みを観察します(段階 1)。</p>
 
-    <h3>段階 0 で決めること</h3>
-    <div class="scroll" tabindex="0" role="region" aria-label="段階 0 で決めることの表">
+    <h3>決まったこと、これから決めること</h3>
+    <div class="scroll" tabindex="0" role="region" aria-label="決めることの表">
       <table>
-        <thead><tr><th>項目</th><th>考え方のヒント</th></tr></thead>
+        <thead><tr><th>項目</th><th>状態</th><th>内容、考え方のヒント</th></tr></thead>
         <tbody>
-          <tr><td class="key">マシンの大きさ</td><td>段階 1 は軽いので、16GB 前後の小さめで始める。vLLM を入れる段階 2 で実測し、足りなければ VM を止めてマシンタイプを変える。変更できる条件は、公式ドキュメントで確認する。</td></tr>
-          <tr><td class="key">リージョン</td><td>東京は遅延が小さく、米国のリージョンは料金が安い傾向がある。料金計算ツールで比べて決める。</td></tr>
-          <tr><td class="key">OS とディスク</td><td>Ubuntu の LTS、x86_64。ディスクは 100GB 前後が目安。ディスクの種類は料金に関わるので比べる。</td></tr>
-          <tr><td class="key">接続方法</td><td><code>gcloud compute ssh</code> と、VS Code の Remote SSH。鍵の扱いを調べる。</td></tr>
-          <tr><td class="key">外部公開</td><td>Kind の Ingress は、インターネットに公開しない。ファイアウォールは開けず、SSH のポート転送で手元のブラウザから見る。</td></tr>
+          <tr><td class="key">クラスタの作り方</td><td>決定</td><td>kubeadm。Kind は使わない</td></tr>
+          <tr><td class="key">ノードの台数</td><td>決定</td><td>control-plane 1 台と worker 2 台</td></tr>
+          <tr><td class="key">サブネット</td><td>決定</td><td>2 つに分ける。control-plane 用 <code>10.10.0.0/27</code>、worker 用 <code>10.10.0.32/27</code></td></tr>
+          <tr><td class="key">ゾーン</td><td>方針</td><td>3 台とも同じゾーンに置く(同じゾーンの内部 IP 通信は無料。ゾーンが違うと通信量の課金がある)</td></tr>
+          <tr><td class="key">外へ出る方法</td><td>決定</td><td>Cloud NAT。VM に外部 IP は付けない</td></tr>
+          <tr><td class="key">SSH</td><td>方針</td><td>IAP 経由だけ。全世界に開けない</td></tr>
+          <tr><td class="key">マシンタイプ</td><td>未定</td><td>段階 1 は小さく始め、メモリが必要な段階の前に、停止中に変える。変更の条件は、公式ドキュメントで確認する</td></tr>
+          <tr><td class="key">リージョン・ゾーン</td><td>未定</td><td>東京は遅延が小さく、米国は料金が安い傾向がある。料金計算ツールで比べる</td></tr>
+          <tr><td class="key">OS とディスク</td><td>未定</td><td>Ubuntu の LTS、x86_64。ディスクはノードごとに必要で、台数分の費用になる</td></tr>
+          <tr><td class="key">CNI</td><td>未定</td><td>Flannel、Calico、Cilium など。NetworkPolicy(段階 4)に対応しているかも、選ぶ基準になる</td></tr>
+          <tr><td class="key">リポジトリ名</td><td>未定</td><td><code>k8s-kind-lab</code> のままか、変えるか</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h3>段階 0 の手順</h3>
+    <h3>段階 0・0b の手順(Terraform)</h3>
     <div class="scroll" tabindex="0" role="region" aria-label="段階 0 の手順の表">
       <table>
         <thead><tr><th class="num">順</th><th>やること</th><th>調べる用語</th></tr></thead>
         <tbody>
-          <tr><td class="num">0-1</td><td>GCP のプロジェクト(作成済み。組織の下)と請求を確認し、<strong>予算アラートを、VM より先に Terraform で作る</strong>(段階 0b)</td><td>Budgets &amp; alerts、google_billing_budget</td></tr>
-          <tr><td class="num">0-2</td><td>Mac に gcloud と Terraform を入れ、ログインする。<code>gcloud auth login</code> と <code>gcloud auth application-default login</code>。ログインは自分で行う</td><td>gcloud CLI、ADC</td></tr>
-          <tr><td class="num">0-3</td><td>VM を作る。コンソールでも gcloud でもよい</td><td>Compute Engine、マシンタイプ、起動ディスク</td></tr>
-          <tr><td class="num">0-4</td><td><strong>自動停止のスケジュール</strong>を設定する。止め忘れを防ぐため、VM を作った直後に行う</td><td>インスタンススケジュール</td></tr>
-          <tr><td class="num">0-5</td><td>SSH で入り、VS Code の Remote SSH でつなぐ</td><td>OS Login、SSH config</td></tr>
-          <tr><td class="num">0-6</td><td>Docker、kubectl、kind を入れる。Kubernetes 1.37 以上のノードイメージが使えるか確認する</td><td>Docker Engine(Linux)、kind のリリース、kindest/node</td></tr>
-          <tr><td class="num">0-7</td><td><code>kind create cluster</code> が通ることを確認する</td><td></td></tr>
+          <tr><td class="num">0-1</td><td>Mac に gcloud と Terraform を入れ、ログインする(済み)。<code>gcloud auth application-default login</code> は、これから</td><td>gcloud CLI、ADC</td></tr>
+          <tr><td class="num">0-2</td><td>GCP のプロジェクト(作成済み。組織の下)と請求を確認する</td><td>プロジェクト、請求アカウント</td></tr>
+          <tr><td class="num">0-3</td><td>Terraform で、専用 VPC、サブネット 2 つ(control-plane 用と worker 用)、ファイアウォール(IAP の SSH、ノード間)、Cloud Router と Cloud NAT(両方のサブネットを対象にする)を作る</td><td>google_compute_network、subnetwork、firewall、router、router_nat</td></tr>
+          <tr><td class="num">0-4</td><td>Terraform で、VM 3 台を作る(外部 IP なし、OS Login、タグ)。<strong>自動停止のスケジュールも、同じコードに入れる</strong></td><td>google_compute_instance、resource_policy、instance_schedule_policy</td></tr>
+          <tr><td class="num">0-5</td><td>IAP 経由で、3 台すべてに SSH でつなぐ。VS Code の Remote SSH も試す</td><td>IAP TCP forwarding、OS Login、SSH config</td></tr>
+          <tr><td class="num">0-6</td><td>疎通を確認する。ノード同士で通信できる。Cloud NAT 経由で、外に出られる</td><td>内部 IP、NAT</td></tr>
         </tbody>
       </table>
     </div>
 
-    <h3>段階 1 で観察すること</h3>
-    <p class="info"><strong>用語の整理。</strong>Service は Pod の前に置く、仮想 IP(ClusterIP)を持つ入口で、実体は各ノードの kube-proxy が作る転送ルールです。Ingress は HTTP の振り分けルール(ホスト名やパス)を書くリソースで、動かすのは Ingress controller です。Istio の Gateway と VirtualService は、段階 4b で、Ingress と比べながら扱います。Ingress の次世代にあたる Gateway API は、段階 7 の agentgateway につながります。</p>
+    <h3>段階 1 で観察すること(kubeadm)</h3>
     <div class="scroll" tabindex="0" role="region" aria-label="段階 1 の観察項目の表">
       <table>
         <thead><tr><th class="num">順</th><th>テーマ</th><th>観察すること</th><th>調べる用語</th></tr></thead>
         <tbody>
-          <tr><td class="num">A</td><td class="key">Kind の正体</td><td><code>docker ps</code> で見えるノードと、<code>kubectl get nodes -o wide</code> の対応</td><td>kubeadm、containerd、kindest/node</td></tr>
-          <tr><td class="num">B</td><td class="key">コントロールプレーン</td><td><code>kube-system</code> の Pod が何で、どこで動くか。control-plane の設定ファイルが置かれる場所</td><td>kube-apiserver、etcd、scheduler、controller-manager、static Pod</td></tr>
-          <tr><td class="num">C</td><td class="key">Pod 作成の流れ</td><td>Pod を 1 つ作り、<code>describe</code> の Events で、スケジュール、取得、起動の順を追う</td><td>kubelet、watch、reconcile</td></tr>
-          <tr><td class="num">D</td><td class="key">ワーカ</td><td>ノードのコンテナに入り、kubelet と containerd を見る。worker のコンテナを止めたとき、Pod が何秒後にどうなるか</td><td>ノードの Ready、taint、eviction</td></tr>
-          <tr><td class="num">E</td><td class="key">Service</td><td>ClusterIP を作り、ノード内の転送ルールで実体を探す。CoreDNS で名前が引けること</td><td>kube-proxy、iptables、EndpointSlice、CoreDNS</td></tr>
-          <tr><td class="num">F</td><td class="key">Ingress</td><td>2 つのアプリを、パスで振り分ける</td><td>Ingress controller、IngressClass、<code>extraPortMappings</code></td></tr>
+          <tr><td class="num">A</td><td class="key">前提の設定</td><td>swap の無効化、カーネルモジュール、sysctl、containerd、cgroup ドライバ。なぜ必要かを説明できる</td><td>br_netfilter、systemd cgroup、CRI</td></tr>
+          <tr><td class="num">B</td><td class="key">kubeadm init の中身</td><td>何が作られるか。static Pod、証明書、kubeconfig、ブートストラップのトークン</td><td>kubeadm init のフェーズ、pki、static Pod</td></tr>
+          <tr><td class="num">C</td><td class="key">CNI の前後</td><td>CNI を入れる前は、ノードが NotReady で、入れると Ready になる理由</td><td>CNI、pod-network-cidr</td></tr>
+          <tr><td class="num">D</td><td class="key">join</td><td>worker が、control-plane に参加する仕組み。トークンと証明書のハッシュ</td><td>kubeadm join、bootstrap token</td></tr>
+          <tr><td class="num">E</td><td class="key">Pod 作成の流れ</td><td>Pod を 1 つ作り、<code>describe</code> の Events で、スケジュール、取得、起動の順を追う</td><td>kubelet、watch、reconcile</td></tr>
+          <tr><td class="num">F</td><td class="key">Service</td><td>ClusterIP の実体を、ノード内の転送ルールで探す。CoreDNS で名前が引けること</td><td>kube-proxy、iptables、EndpointSlice</td></tr>
+          <tr><td class="num">G</td><td class="key">Ingress</td><td>2 つのアプリを、パスで振り分ける。入口は NodePort で出し、IAP のポート転送で見る</td><td>Ingress controller、IngressClass、NodePort</td></tr>
+          <tr><td class="num">H</td><td class="key">障害の観察</td><td>worker の VM を止めたとき、Pod が何秒後にどうなるか。VM を止めて起動し直したとき、クラスタが戻るか</td><td>ノードの Ready、taint、eviction</td></tr>
         </tbody>
       </table>
     </div>
-    <p>B〜D は、<strong>予想を書いてから実行し、結果と見比べる</strong>進め方にします。「止めたらどうなるか」を先に予想すると、仕組みが頭に残ります。</p>
-    <div class="cols">
-      <div>
-        <h3>Kind の設定で調べる点</h3>
-        <ul>
-          <li>ノードの <code>role</code> を並べて、control-plane 1 台と worker 3 台を指定する方法</li>
-          <li>ホストのポートをノードに通す <code>extraPortMappings</code></li>
-          <li>Ingress controller を載せるノードに付けるラベル(Kind の公式ドキュメントの Ingress の節)</li>
-        </ul>
-      </div>
-      <div>
-        <h3>成果物</h3>
-        <ul>
-          <li><code>docs/01-k8s-basics.md</code> に、control-plane と worker の図と各部品の役割を書く</li>
-          <li>Pod 作成の流れと、Service と Ingress の違いを、自分の言葉で書く</li>
-          <li>「予想と結果が違った点」を残す</li>
-        </ul>
-      </div>
-    </div>
-    <p class="note"><strong>Ingress controller の選択は、着手時に決めます。</strong>以前よく使われた ingress-nginx は、メンテナンスが終わる発表があったはずですが、確認できていません。Kind の公式ドキュメントと各プロジェクトの現状を見て選びます。</p>
-  </section>
-
-  <section id="kagent1">
-    <h2>kagent 1.0 の前提</h2>
-    <p>公式の 1.0.0 リリースノートと、0.x からの移行手順で確認した内容です。0.x と同じ感覚では動かないので、設計に影響する点だけを挙げます。</p>
-    <div class="scroll" tabindex="0" role="region" aria-label="kagent 1.0 の前提の表">
-      <table>
-        <thead><tr><th>項目</th><th>1.0 での扱い</th><th>設計への影響</th></tr></thead>
-        <tbody>
-          <tr><td class="key">実行基盤</td><td>エージェントは Deployment ではなく、Agent Substrate 上のアクターとして動く。既定で gVisor のサンドボックス内</td><td>Substrate と WorkerPool を先に用意する(段階 6a)</td></tr>
-          <tr><td class="key">データベース</td><td>PostgreSQL が必須</td><td>Kind 内に PostgreSQL を置く。永続化の練習にもなる</td></tr>
-          <tr><td class="key">Kubernetes</td><td>移行手順に 1.37 以上のクラスタとある</td><td>Kind のノードイメージを確認する</td></tr>
-          <tr><td class="key">CRD</td><td>API グループが <code>api.kagent.dev</code> に変わり、Agent は AgentTemplate、Harness、Agent に分かれた</td><td>0.x 向けの記事や <code>kagent-training</code> は、そのままでは使えない</td></tr>
-          <tr><td class="key">MCP サーバ</td><td>kmcp と同梱の MCP サーバは廃止。kagent の外で動かし、RemoteMCPServer で指定する</td><td>ツール用の MCP サーバは自分で用意する</td></tr>
-          <tr><td class="key">アップグレード</td><td>0.x からの in-place 移行はなく、会話履歴も引き継がれない</td><td>最初から 1.0 で入れる</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="note"><strong>成熟度の表記は情報源で食い違っています。</strong>公式サイトの一部は alpha、開発元のブログは GA と書いています。着手時に、最新のリリースノートを読み直します。</p>
+    <p>C、E、H は、<strong>予想を書いてから実行し、結果と見比べる</strong>進め方にします。成果物は <code>docs/01-kubeadm-basics.md</code> です。</p>
+    <p class="note"><strong>Kubernetes 1.37 以上のパッケージが使えるか、着手時に確認します。</strong>kubeadm、kubelet、kubectl の入れ方は、公式ドキュメントの手順に従います。</p>
   </section>
 
   <section id="arch">
     <h2>全体構成</h2>
-    <p>Google Cloud の VM を 1 台用意し、その中で Kind を動かします。ノードは control-plane 1 台と worker 3 台の案です。worker-3 はエージェントの実行専用にします。</p>
+    <p>専用の VPC の中に、サブネットが 2 つ(control-plane 用と worker 用)、VM が 3 台あります。VM は内部 IP だけを持ち、外へは Cloud NAT で出ます。入口は、IAP 経由の SSH だけです。</p>
     <div class="fig">
-      <svg viewBox="0 0 760 392" role="img" aria-label="GCE VM の中に Kind クラスタがあり、control-plane 1 台と worker 3 台で構成される。worker-1 は API と Redis と PostgreSQL、worker-2 はワーカと vLLM、worker-3 はエージェント用で Substrate と kagent を載せる。">
-        <rect class="vm" x="4" y="4" width="752" height="384" rx="10"/>
-        <text class="t-head" x="20" y="28">GCE VM(Ubuntu・使うときだけ起動、夜間は自動停止)</text>
-        <rect class="cluster" x="20" y="44" width="720" height="332" rx="8"/>
-        <text class="t-mono" x="34" y="66">Kind クラスタ(Kubernetes 1.37 以上・各ノードは Docker コンテナ)</text>
+      <svg viewBox="0 0 760 470" role="img" aria-label="Mac から Google の IAP を経由して、専用の VPC の中の 3 台の VM に SSH でつなぐ。サブネットは control-plane 用と worker 用の 2 つで、VM は control-plane 1 台と worker 2 台。外へは Cloud Router と Cloud NAT を通ってインターネットに出る。">
+        <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
 
-        <rect class="node" x="34" y="82" width="166" height="196" rx="6"/>
-        <text class="t-head" x="44" y="104">control-plane</text>
-        <rect class="pod" x="44" y="116" width="146" height="40" rx="4"/>
-        <text x="54" y="140">apiserver / etcd</text>
-        <rect class="pod" x="44" y="164" width="146" height="40" rx="4"/>
-        <text x="54" y="188">scheduler ほか</text>
-        <rect class="pod-hot" x="44" y="212" width="146" height="54" rx="4"/>
-        <text x="54" y="234">Ingress controller</text>
-        <text class="t-mono" x="54" y="252">ポートを公開</text>
+        <rect class="pod" x="6" y="176" width="88" height="64" rx="6"/>
+        <text class="t-head" x="16" y="202">Mac</text>
+        <text class="t-mono" x="16" y="218">gcloud</text>
+        <text class="t-mono" x="16" y="232">VS Code</text>
+        <line class="line" x1="94" y1="208" x2="108" y2="208" marker-end="url(#arr)"/>
 
-        <rect class="node" x="210" y="82" width="166" height="196" rx="6"/>
-        <text class="t-head" x="220" y="104">worker-1 アプリ</text>
-        <rect class="pod-hot" x="220" y="116" width="146" height="74" rx="4"/>
-        <text class="t-mono" x="230" y="134">ns: api</text>
-        <text x="230" y="156">API サーバ × 2</text>
-        <text class="t-muted" x="230" y="176" style="font-size:11px">ジョブを受け付ける</text>
-        <rect class="pod-hot" x="220" y="198" width="146" height="68" rx="4"/>
-        <text class="t-mono" x="230" y="216">ns: data</text>
-        <text x="230" y="238">Redis</text>
-        <text x="230" y="256">PostgreSQL</text>
+        <rect class="pod-hot" x="110" y="176" width="116" height="64" rx="6"/>
+        <text class="t-head" x="120" y="202">Google IAP</text>
+        <text class="t-mono" x="120" y="222">35.235.240.0/20</text>
+        <text class="t-warn" x="108" y="262">FW: TCP 22 を</text>
+        <text class="t-warn" x="108" y="276">IAP の範囲から許可</text>
+        <line class="line" x1="226" y1="208" x2="258" y2="208" marker-end="url(#arr)"/>
 
-        <rect class="node" x="386" y="82" width="166" height="196" rx="6"/>
-        <text class="t-head" x="396" y="104">worker-2 推論</text>
-        <rect class="pod-hot" x="396" y="116" width="146" height="74" rx="4"/>
-        <text class="t-mono" x="406" y="134">ns: llm</text>
-        <text x="406" y="156">vLLM(CPU)</text>
-        <text class="t-muted" x="406" y="176" style="font-size:11px">小さいモデル + PVC</text>
-        <rect class="pod-hot" x="396" y="198" width="146" height="68" rx="4"/>
-        <text class="t-mono" x="406" y="216">ns: worker</text>
-        <text x="406" y="238">ワーカ × 2</text>
-        <text class="t-muted" x="406" y="256" style="font-size:11px">キューを処理</text>
+        <rect class="cluster" x="240" y="12" width="490" height="388" rx="8"/>
+        <text class="t-mono" x="252" y="32">専用の VPC</text>
 
-        <rect class="node" x="562" y="82" width="166" height="196" rx="6"/>
-        <text class="t-head" x="572" y="104">worker-3 エージェント</text>
-        <text class="t-warn" x="572" y="136">taint で専用にする案</text>
-        <rect class="pod-later" x="572" y="144" width="146" height="62" rx="4"/>
-        <text class="t-mono" x="582" y="162">ns: substrate</text>
-        <text x="582" y="182">Substrate</text>
-        <text x="582" y="198">WorkerPool</text>
-        <rect class="pod-later" x="572" y="214" width="146" height="54" rx="4"/>
-        <text class="t-mono" x="582" y="232">ns: kagent</text>
-        <text x="582" y="254">kagent 1.0</text>
+        <rect class="node" x="250" y="42" width="154" height="282" rx="6"/>
+        <text class="t-mono" x="258" y="58">サブネット 10.10.0.0/27</text>
+        <rect class="node" x="412" y="42" width="308" height="282" rx="6"/>
+        <text class="t-mono" x="420" y="58">サブネット 10.10.0.32/27</text>
 
-        <rect class="later" x="34" y="294" width="694" height="68" rx="6"/>
-        <text class="t-mono" x="48" y="316">後の段階で追加</text>
-        <text x="48" y="336">argocd ns(段階 5)　／　agentgateway ns(段階 7)</text>
-        <text class="t-muted" x="48" y="353" style="font-size:11px">どのノードに載せるかは、メモリ使用量を見て決める</text>
+        <rect class="vm" x="260" y="72" width="134" height="196" rx="6"/>
+        <text class="t-head" x="270" y="92">control-plane</text>
+        <rect class="pod" x="270" y="104" width="114" height="40" rx="4"/>
+        <text x="278" y="128">apiserver, etcd</text>
+        <rect class="pod" x="270" y="152" width="114" height="40" rx="4"/>
+        <text x="278" y="176">scheduler ほか</text>
+        <rect class="pod" x="270" y="200" width="114" height="40" rx="4"/>
+        <text x="278" y="224">kubelet + CNI</text>
+
+        <rect class="vm" x="422" y="72" width="134" height="196" rx="6"/>
+        <text class="t-head" x="432" y="92">worker-1</text>
+        <rect class="pod-hot" x="432" y="104" width="114" height="40" rx="4"/>
+        <text x="440" y="128">ns: api, data</text>
+        <rect class="pod-later" x="432" y="152" width="114" height="40" rx="4"/>
+        <text x="440" y="176">Argo CD ほか</text>
+        <rect class="pod" x="432" y="200" width="114" height="40" rx="4"/>
+        <text x="440" y="224">kubelet + CNI</text>
+
+        <rect class="vm" x="566" y="72" width="134" height="196" rx="6"/>
+        <text class="t-head" x="576" y="92">worker-2</text>
+        <rect class="pod-hot" x="576" y="104" width="114" height="40" rx="4"/>
+        <text x="584" y="128">ns: llm, worker</text>
+        <rect class="pod-later" x="576" y="152" width="114" height="40" rx="4"/>
+        <text x="584" y="176">Substrate ほか</text>
+        <rect class="pod" x="576" y="200" width="114" height="40" rx="4"/>
+        <text x="584" y="224">kubelet + CNI</text>
+
+        <text class="t-mono" x="252" y="296">ノード同士の通信は、FW のルールで許可</text>
+
+        <path class="line" d="M327,324 V362 H470" marker-end="url(#arr)"/>
+        <line class="line" x1="566" y1="324" x2="566" y2="340" marker-end="url(#arr)"/>
+        <rect class="pod-hot" x="470" y="340" width="210" height="44" rx="6"/>
+        <text class="t-head" x="484" y="367">Cloud Router + Cloud NAT</text>
+        <line class="line" x1="575" y1="384" x2="575" y2="420" marker-end="url(#arr)"/>
+        <text class="t-mono" x="590" y="412">外へ出る通信</text>
+        <rect class="pod" x="495" y="420" width="160" height="42" rx="6"/>
+        <text class="t-head" x="511" y="446">インターネット</text>
       </svg>
     </div>
-    <p class="cap">青い枠は段階 2〜3 で自分が手を動かす部分です。破線は後の段階で足す部分です。worker-3 の専用化は案で、まだ決めていません。</p>
+    <p class="cap">青い枠は、段階 2〜3 で自分が手を動かす部分です。破線は、後の段階で足す部分です。Cloud NAT は、2 つのサブネットの両方が対象です。Pod のネットワークの範囲は、CNI を選んでから決めます。</p>
+  </section>
+
+  <section id="network">
+    <h2>ネットワーク構成</h2>
+    <div class="scroll" tabindex="0" role="region" aria-label="ネットワーク構成要素の表">
+      <table>
+        <thead><tr><th>要素</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td class="key">VPC</td><td>専用のものを 1 つ。サブネットは自動で作らない。既定のネットワークは使わない(既定のネットワークには、SSH を全世界に開くルールが付いている場合がある)</td></tr>
+          <tr><td class="key">サブネット</td><td>2 つ。control-plane 用 <code>10.10.0.0/27</code>、worker 用 <code>10.10.0.32/27</code>(それぞれ 32 個のアドレス。予約を除いて、使えるのは約 28 個)。VM は 3 台なので足りる。Pod と Service の範囲は、別にある</td></tr>
+          <tr><td class="key">ファイアウォール(IAP)</td><td>TCP 22 を、IAP の範囲(<code>35.235.240.0/20</code>)からだけ許可する。対象は、タグで絞る</td></tr>
+          <tr><td class="key">ファイアウォール(ノード間)</td><td>ノード同士の通信を許可する。API サーバ、etcd、kubelet、NodePort、CNI のポートなど。必要なポートは、kubeadm と CNI の公式ドキュメントで確認する。VM にネットワークタグ(<code>control-plane</code>、<code>worker</code>)を付け、役割ごとに許可する相手を絞る。サブネットの範囲でも絞れる</td></tr>
+          <tr><td class="key">外へ出る方法</td><td>Cloud Router と Cloud NAT。VM に外部 IP は付けない。2 つのサブネットの両方を、NAT の対象に入れる。NAT の外部 IP は、自動で割り当てる設定にする案(要確認)</td></tr>
+          <tr><td class="key">SSH</td><td>IAP 経由と OS Login。VS Code の Remote SSH も、同じ経路を使う</td></tr>
+          <tr><td class="key">公開するポート</td><td>なし。80、443、6443、NodePort は、外に開けない。画面は IAP のポート転送で見る</td></tr>
+          <tr><td class="key">VM の内部 IP</td><td>VM を止めても、内部 IP は残る見込み。ノードの IP が変わらないよう、予約するかを検討する(要確認)</td></tr>
+          <tr><td class="key">ゾーン</td><td>3 台とも、同じゾーンに置く。同じゾーンの内部 IP の通信は無料で、ゾーンが違うと、通信量の課金がある。サブネットを分けても、この単価は変わらない(公式の料金ページで確認する)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>使わない部品</h3>
+    <div class="scroll" tabindex="0" role="region" aria-label="使わない部品の表">
+      <table>
+        <thead><tr><th>部品</th><th>本来の役割</th><th>今回</th></tr></thead>
+        <tbody>
+          <tr><td class="key">ロードバランサ</td><td>外から複数の VM に振り分ける</td><td>使わない。外に公開しない</td></tr>
+          <tr><td class="key">固定の外部 IP</td><td>再起動しても変わらない IP</td><td>使わない。SSH は IAP 経由で、IP に依存しない</td></tr>
+          <tr><td class="key">VPN</td><td>自宅や会社のネットワークと、VPC をつなぐ</td><td>使わない。IAP で足りる</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>IP の範囲</h3>
+    <p>ノードのサブネットと、Pod、Service の範囲が重ならないようにします。Pod の範囲は、選ぶ CNI の既定の値によって変わります。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="IP の範囲の表">
+      <table>
+        <thead><tr><th>用途</th><th>範囲</th><th>備考</th></tr></thead>
+        <tbody>
+          <tr><td class="key">サブネット(control-plane 用)</td><td class="num">10.10.0.0/27</td><td>自分で決めた範囲。約 28 個のアドレスが使える</td></tr>
+          <tr><td class="key">サブネット(worker 用)</td><td class="num">10.10.0.32/27</td><td>自分で決めた範囲。約 28 個のアドレスが使える</td></tr>
+          <tr><td class="key">Pod</td><td class="num">未定</td><td><code>kubeadm init</code> の <code>--pod-network-cidr</code> と、CNI の設定で決める。CNI ごとの既定の値は、サブネットと重ならないか確認する</td></tr>
+          <tr><td class="key">Service</td><td class="num">未定</td><td>kubeadm の既定の値を使う案。公式ドキュメントで確認する</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Mac から画面を見る流れ</h3>
+    <ol class="flow">
+      <li><b>接続</b>Mac から、IAP 経由で control-plane か worker に SSH でつなぐ。<span class="where">Mac → IAP → VM</span></li>
+      <li><b>ポート転送</b>Mac の localhost のポートを、VM の NodePort につなぐ(<code>-L</code> または IAP のトンネル)。<span class="where">Mac:8080 → VM:NodePort</span></li>
+      <li><b>表示</b>Mac のブラウザで、Ingress の画面を見る。外には公開しない。<span class="where">ブラウザ → localhost</span></li>
+    </ol>
+    <p class="note"><strong>LoadBalancer の扱いは、確認が必要です。</strong>kubeadm のクラスタには、外のロードバランサがないので、Service の種類を <code>LoadBalancer</code> にすると <code>Pending</code> のままになります。MetalLB の L2 方式は、Google Cloud の VPC では使えない可能性があります(要確認)。まずは NodePort とポート転送で進めます。</p>
   </section>
 
   <section id="flow">
@@ -336,24 +370,45 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
     </ol>
   </section>
 
+  <section id="kagent1">
+    <h2>kagent 1.0 の前提</h2>
+    <p>公式の 1.0.0 リリースノートと、0.x からの移行手順で確認した内容です。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="kagent 1.0 の前提の表">
+      <table>
+        <thead><tr><th>項目</th><th>1.0 での扱い</th><th>設計への影響</th></tr></thead>
+        <tbody>
+          <tr><td class="key">実行基盤</td><td>エージェントは Deployment ではなく、Agent Substrate 上のアクターとして動く。既定で gVisor のサンドボックス内</td><td>Substrate と WorkerPool を先に用意する(段階 6a)。本物の VM なので、Kind より動く可能性は高い(要確認)</td></tr>
+          <tr><td class="key">データベース</td><td>PostgreSQL が必須</td><td>クラスタ内に PostgreSQL を置く。永続化の練習にもなる</td></tr>
+          <tr><td class="key">Kubernetes</td><td>移行手順に 1.37 以上のクラスタとある</td><td>kubeadm のパッケージで、1.37 以上が使えるか確認する</td></tr>
+          <tr><td class="key">CRD</td><td>API グループが <code>api.kagent.dev</code> に変わり、Agent は AgentTemplate、Harness、Agent に分かれた</td><td>0.x 向けの記事や <code>kagent-training</code> は、そのままでは使えない</td></tr>
+          <tr><td class="key">MCP サーバ</td><td>kmcp と同梱の MCP サーバは廃止。kagent の外で動かし、RemoteMCPServer で指定する</td><td>ツール用の MCP サーバは、自分で用意する</td></tr>
+          <tr><td class="key">アップグレード</td><td>0.x からの in-place 移行はなく、会話履歴も引き継がれない</td><td>最初から 1.0 で入れる</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note"><strong>成熟度の表記は、情報源で食い違っています。</strong>公式サイトの一部は alpha、開発元のブログは GA と書いています。着手時に、最新のリリースノートを読み直します。</p>
+  </section>
+
   <section id="decisions">
     <h2>設計判断と理由</h2>
     <div class="scroll" tabindex="0" role="region" aria-label="設計判断の表">
       <table>
         <thead><tr><th>決めたこと</th><th>理由</th><th>検討した代替</th></tr></thead>
         <tbody>
-          <tr><td class="key">最初から Kind を GCE の VM 1 台で動かす</td><td>Mac は Intel でメモリ 16GB のため、後の段階が動かない。環境を一つにそろえれば、途中で移行する手間がない。VM なら止めている間の課金がディスク代だけになる。</td><td>Mac で始めて途中で VM へ移る(環境が二つに分かれる)。GKE(常時課金のため不採用)。</td></tr>
-          <tr><td class="key">VM は小さく始め、必要になったら大きくする</td><td>段階 1 は軽く、16GB 前後で足りる見込み。メモリを使う段階の前に、停止中にマシンタイプを変えれば、無駄な課金を避けられる。</td><td>最初から 32GB や 64GB(簡単だが、使わない間も高い)。</td></tr>
-          <tr><td class="key">kagent は 1.0 を使う</td><td>OSS への貢献は、現行の main(1.x)が対象になる。0.10.x は 1.0 に置き換えられ、移行手順もない。</td><td>0.10.x で先に慣れる(軽いが、後でやり直しになる)。</td></tr>
-          <tr><td class="key">Substrate と PostgreSQL を kagent の前に入れる</td><td>1.0 の前提で、エージェントはこの上で動く。先に単体で動くことを確かめると、原因を切り分けやすい。</td><td>kagent と同時に導入(失敗したとき、どこが悪いか分からない)。</td></tr>
-          <tr><td class="key">worker を 3 台にする案</td><td>エージェント用のノードを taint で専用にすると、nodeSelector と toleration の練習になる。メモリも分散できる。</td><td>worker 2 台に同居(軽いが、配置の制御を学べない)。</td></tr>
-          <tr><td class="key">LLM の通信は agentgateway を通す</td><td>Gateway API に準拠していて、vLLM の登録手順が公式にある。通信のログと上限を一か所で見られる。</td><td>kagent から vLLM に直接(段階 6 で先に試す)。kgateway は使わない。</td></tr>
-          <tr><td class="key">API とワーカを Redis で分ける</td><td>推論が遅くても API が詰まらない。ワーカ数を増やす、Job にするなど、スケールの練習ができる。</td><td>API から vLLM を直接呼ぶ同期方式(単純だがタイムアウトしやすい)。</td></tr>
-          <tr><td class="key">namespace を役割で分ける</td><td>api、data、worker、llm などの単位が、そのまま RBAC、NetworkPolicy、ResourceQuota の練習単位になる。</td><td>default に全部(権限や通信の制御を学べない)。</td></tr>
-          <tr><td class="key">先に手書き、後で GitOps</td><td>先に <code>kubectl apply</code> で仕組みを理解してから Argo CD に任せると、自動化されていることが分かる。</td><td>最初から Argo CD(早いが中身が見えにくい)。</td></tr>
-          <tr><td class="key">Ingress を学んでから Istio に移る</td><td>段階 1 は素の K8s の動きを見たい。最初から Istio を入れると、Pod の中に proxy が入り、通信が書き換わって、基礎が見えにくくなる。同じ入口を後で置き換えると、違いがはっきり分かる。</td><td>最初から Istio(重く、基礎が見えにくい)。Istio は扱わない。</td></tr>
-          <tr><td class="key">予算アラートと VM の再現は Terraform で行う</td><td>課金が発生せず、失敗しても安全な題材で Terraform を学べる。VM を手で作ってから再現すると、何を設定したかが分かる。壊しても作り直せる、という方針にも合う。</td><td>コンソールだけで設定する(簡単だが、再現できない)。</td></tr>
-          <tr><td class="key">バージョンは着手時に確認して固定</td><td>どの製品も更新が速い。推測せず、公式のリリース情報から決めて CLAUDE.md に記録する。</td><td>latest タグ(再現できなくなる)。</td></tr>
+          <tr><td class="key">クラスタは kubeadm で、本物の VM に作る</td><td>control-plane と worker の仕組みを、組み立てるところから理解したい。ノード間のネットワークや、ノードの障害も体験できる。gVisor が動く可能性も高い。CKA の範囲にも関わる。</td><td>Kind(軽くて速いが、クラスタ構築は学べない)。併用(費用と手間が増える)。</td></tr>
+          <tr><td class="key">control-plane 1 台と worker 2 台</td><td>最小の複数ノード。配置、障害、ノードの追加が学べる。台数分の費用を、抑えられる。</td><td>worker 3 台(費用が増える)。単一ノード(学べる範囲が狭い)。</td></tr>
+          <tr><td class="key">サブネットは 2 つに分ける(control-plane 用 <code>10.10.0.0/27</code>、worker 用 <code>10.10.0.32/27</code>)</td><td>役割ごとにネットワークを分ける、実務に近い形を練習できる。ファイアウォールを、サブネットの範囲でも絞れる。VM 3 台には、それぞれ十分な大きさ。費用は、ほぼ変わらない見込み。</td><td>1 つの <code>/26</code>(設定は少ないが、分離の練習ができない)。<code>/24</code>(必要以上に広い)。</td></tr>
+          <tr><td class="key">外へは Cloud NAT で出る。VM に外部 IP は付けない</td><td>ノードがインターネットから見えない。3 台なら、外部 IP を台数分付けるより、費用も同程度かやや安い見込み。Terraform で Router と NAT を学べる。</td><td>外部 IP を台数分(簡単だが、ノードが公開される)。</td></tr>
+          <tr><td class="key">専用の VPC と、IAP 経由の SSH だけにする</td><td>外に何も公開せず、入口を 1 つに絞れる。IP が変わっても、SSH の設定を直さなくてよい。</td><td>既定のネットワークと、自分の IP だけを許可する方式。</td></tr>
+          <tr><td class="key">VM とネットワークは Terraform で作る</td><td>最初から作り直せる。台数が増えても、同じコードで済む。課金が発生しない題材から始められる。</td><td>コンソールで作る(再現できない)。</td></tr>
+          <tr><td class="key">マシンタイプは小さく始める</td><td>段階 1 は軽い。メモリが必要な段階の前に、停止中に変えれば、無駄な課金を避けられる。</td><td>最初から大きいマシン(使わない間も高い)。</td></tr>
+          <tr><td class="key">kagent は 1.0 を使う</td><td>OSS への貢献は、現行の main(1.x)が対象。0.10.x は 1.0 に置き換えられた。</td><td>0.10.x で先に慣れる(後でやり直しになる)。</td></tr>
+          <tr><td class="key">Substrate と PostgreSQL を、kagent の前に入れる</td><td>1.0 の前提で、エージェントはこの上で動く。先に単体で確認すると、原因を切り分けやすい。</td><td>kagent と同時に導入(失敗したとき、どこが悪いか分からない)。</td></tr>
+          <tr><td class="key">Ingress を学んでから Istio に移る</td><td>段階 1 は素の K8s の動きを見たい。同じ入口を後で置き換えると、違いがはっきり分かる。</td><td>最初から Istio(重く、基礎が見えにくい)。</td></tr>
+          <tr><td class="key">LLM の通信は agentgateway を通す</td><td>Gateway API に準拠していて、vLLM の登録手順が公式にある。通信のログと上限を、一か所で見られる。</td><td>kagent から vLLM に直接(段階 6 で先に試す)。kgateway は使わない。</td></tr>
+          <tr><td class="key">先に手書き、後で GitOps</td><td>先に <code>kubectl apply</code> で仕組みを理解してから Argo CD に任せると、自動化されていることが分かる。</td><td>最初から Argo CD。</td></tr>
+          <tr><td class="key">学んだことを Zenn の記事にする</td><td>理解を、人に説明できる形にして、定着させる。kagent の連載の続きにもなる。</td><td>ノートのまま残す。</td></tr>
+          <tr><td class="key">バージョンは着手時に確認して固定</td><td>どの製品も更新が速い。推測せず、公式のリリース情報から決めて CLAUDE.md に記録する。</td><td>latest(再現できなくなる)。</td></tr>
         </tbody>
       </table>
     </div>
@@ -366,15 +421,16 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
       <table>
         <thead><tr><th class="num">段階</th><th>テーマ</th><th>完了の目安</th></tr></thead>
         <tbody>
-          <tr><td class="num">0</td><td class="key">環境準備</td><td>VM に VS Code の Remote SSH でつながり、Docker、kind、kubectl、helm が動く。予算アラートと自動停止が設定されている。Kubernetes 1.37 以上のノードイメージが使えると確認できている。</td></tr>
-          <tr><td class="num">0b</td><td class="key">Terraform</td><td>Terraform で予算アラートを作れる(<code>plan</code> の結果を読んでから <code>apply</code> する)。手で作った VM を Terraform で再現し、消して作り直せる。状態ファイルをコミットしていない。</td></tr>
-          <tr><td class="num">1</td><td class="key">K8s の基礎</td><td>control-plane 1 台と worker 3 台のクラスタができる。Pod 作成の流れ、worker を止めたときの挙動、Service と Ingress の違いを、自分の言葉で説明できる(<code>docs/01-k8s-basics.md</code>)。</td></tr>
+          <tr><td class="num">0</td><td class="key">環境準備</td><td>Mac の gcloud と Terraform が使え、ログインできている。プロジェクトと請求が確認できている。</td></tr>
+          <tr><td class="num">0b</td><td class="key">Terraform で VM とネットワーク</td><td>専用 VPC、ファイアウォール、Cloud NAT、VM 3 台が作れる(<code>plan</code> の結果を読んでから <code>apply</code>)。自動停止が動く。IAP 経由で 3 台に SSH できる。状態ファイルをコミットしていない。</td></tr>
+          <tr><td class="num">1</td><td class="key">kubeadm でクラスタ</td><td>前提の設定、<code>init</code>、CNI、<code>join</code> を終え、3 ノードが Ready になる。Pod 作成の流れ、Service、Ingress、worker を止めたときの挙動を、自分の言葉で説明できる(<code>docs/01-kubeadm-basics.md</code>)。</td></tr>
+          <tr><td class="num">1b</td><td class="key">運用演習(任意)</td><td>etcd のバックアップと復旧、kubeadm のアップグレード、ノードの追加と削除を試せる。</td></tr>
           <tr><td class="num">2</td><td class="key">vLLM をデプロイ</td><td>Pod が Ready になり、クラスタ内から問い合わせて応答が返る。</td></tr>
           <tr><td class="num">3</td><td class="key">API とワーカ</td><td>ジョブを投入して、ID で結果を取得できる。ワーカを増やすと処理が分散する。</td></tr>
           <tr><td class="num">4</td><td class="key">運用の理解</td><td>通信制限、権限、ローリングアップデート、ノード停止の実験を、それぞれ自分の言葉で説明できる。</td></tr>
-          <tr><td class="num">4b</td><td class="key">Istio(Ingress から移行)</td><td>段階 3 の API の入口を、Ingress から Istio の Gateway と VirtualService に移せる。Ingress との違い(メッシュ内の通信、mTLS、トラフィックの分割)を、自分の言葉で説明できる。</td></tr>
-          <tr><td class="num">5</td><td class="key">Argo CD</td><td>段階 3 のアプリが Git の変更で自動的に反映される。</td></tr>
-          <tr><td class="num">6a</td><td class="key">PostgreSQL と Substrate</td><td>PostgreSQL が永続化つきで動く。Substrate が入り、WorkerPool 上で gVisor のサンドボックスが動く。動かない場合は、その原因を記録する。</td></tr>
+          <tr><td class="num">4b</td><td class="key">Istio(Ingress から移行)</td><td>段階 3 の API の入口を、Ingress から Istio の Gateway と VirtualService に移せる。Ingress との違いを、自分の言葉で説明できる。</td></tr>
+          <tr><td class="num">5</td><td class="key">Argo CD</td><td>段階 3 のアプリが、Git の変更で自動的に反映される。</td></tr>
+          <tr><td class="num">6a</td><td class="key">PostgreSQL と Substrate</td><td>PostgreSQL が永続化つきで動く。Substrate が入り、WorkerPool 上で gVisor のサンドボックスが動く。動かない場合は、原因を記録する。</td></tr>
           <tr><td class="num">6b</td><td class="key">kagent 1.0</td><td>vLLM に直接つないだエージェントが応答する。セッションが Substrate 上で動いていることを確認できる。</td></tr>
           <tr><td class="num">7</td><td class="key">agentgateway</td><td>ModelConfig の向き先を agentgateway に変え、LLM の通信がログで見える。続けて MCP サーバへの呼び出しも経由させる。</td></tr>
         </tbody>
@@ -384,44 +440,43 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
 
   <section id="risks">
     <h2>リスクと、最初に確かめること</h2>
-    <p>kagent 1.0 まわりは新しく、資料も少ないので、動かないことを前提に確認の順番を決めておきます。</p>
+    <p>新しいものが多く、資料も少ないので、動かないことを前提に、確認の順番を決めておきます。</p>
     <div class="scroll" tabindex="0" role="region" aria-label="リスクの表">
       <table>
         <thead><tr><th>リスク</th><th>確かめ方</th><th>だめだったとき</th></tr></thead>
         <tbody>
-          <tr><td class="key">Kind の中で gVisor が動かない</td><td>段階 6a の最初に、WorkerPool でサンドボックスを 1 つ動かす。Kind のノードは Docker コンテナで、権限やカーネルの制約を受ける。</td><td>別の分離クラス(microvm)を調べる。VM 側の設定が必要になる可能性がある。解決しなければ、原因を記録して 0.10.x に切り替える。</td></tr>
-          <tr><td class="key">K8s 1.37 以上の Kind ノードイメージが無い</td><td>段階 0 で、Kind の最新版が対応するノードイメージを調べる。</td><td>対応版が出るまで、公式が許す範囲で下の版を試す。</td></tr>
-          <tr><td class="key">メモリが足りない</td><td>段階ごとに実測し、見積りを直す。</td><td>VM を 64GB 級に上げる。または使わない段階のものを止める。</td></tr>
+          <tr><td class="key">Kubernetes 1.37 以上のパッケージが無い</td><td>段階 0b の前に、kubeadm の公式ドキュメントとパッケージの提供状況を確認する。</td><td>提供される最新の版で始め、kagent 1.0 の前提との差を記録する。</td></tr>
+          <tr><td class="key">kubeadm の手順で、つまずく</td><td>公式ドキュメントの順に進め、各ステップで状態を確認する。つまずきは、手順書に記録する。</td><td>VM を作り直して、やり直す(Terraform)。</td></tr>
+          <tr><td class="key">CNI の選択で迷う</td><td>NetworkPolicy に対応しているか、Pod の範囲が重ならないかを確認する。</td><td>先に一つ選んで進め、段階 4 の前に、入れ替えを検討する。</td></tr>
+          <tr><td class="key">Cloud NAT の設定を間違えて、外に出られない</td><td>VM 作成後すぐに、外へ出られるか(パッケージの取得)を試す。</td><td>一時的に、外部 IP を付けて切り分ける。</td></tr>
+          <tr><td class="key">サブネットを分けたため、ファイアウォールのルールを間違えて、ノード間で通信できない</td><td>VM を作ったあとに、control-plane と worker の間で、ping や、API サーバのポートへの接続を試す。</td><td>一時的に、ノード間の通信をすべて許可して切り分け、必要なポートだけに絞り直す。</td></tr>
+          <tr><td class="key">IAP 経由の SSH が通らない</td><td>VM を作った直後に、IAP の API、ファイアウォールの範囲、権限を確認する。</td><td>自分のグローバル IP だけを許可する方式に、一時的に切り替える。</td></tr>
+          <tr><td class="key">LoadBalancer が Pending のままになる</td><td>段階 1 の G の前に、NodePort の使い方を調べる。MetalLB は、Google Cloud の VPC で使えるかを調べる。</td><td>NodePort とポート転送で見る。</td></tr>
+          <tr><td class="key">VM を止めて起動し直すと、ノードが戻らない</td><td>段階 1 の H で、わざと止めて起動し直し、挙動を観察する。内部 IP が変わらないか確認する。</td><td>kubeadm のノードの状態を確認し、必要ならクラスタを作り直す。</td></tr>
+          <tr><td class="key">gVisor が動かない</td><td>段階 6a の最初に、WorkerPool でサンドボックスを 1 つ動かす。</td><td>別の分離クラス(microvm)を調べる。VM 側の設定が必要になる可能性がある。解決しなければ、原因を記録して 0.10.x に切り替える。</td></tr>
+          <tr><td class="key">Istio と agentgateway で、入口の役割が重なる</td><td>どちらも Gateway API を扱える。段階 4b の前に、GatewayClass で担当を分ける方法を調べる。</td><td>段階 7 の前に、Istio の入口を片付ける。または、Istio は一部の namespace だけに限る。</td></tr>
+          <tr><td class="key">Istio のモードの選択で迷う</td><td>sidecar 方式と ambient 方式がある。着手時に、公式ドキュメントで現在の推奨と、kagent 1.0 との相性を調べる。</td><td>通信の仕組みを学ぶ目的に合う方を選ぶ。合わなければ、対象の namespace を絞る。</td></tr>
           <tr><td class="key">資料が少なく、情報が古い</td><td>公式ドキュメントとリリースノートを最優先にする。0.x 向けの記事は参考程度にする。</td><td>Issue を調べ、見つからなければ自分で書く。貢献の種になる。</td></tr>
-          <tr><td class="key">成熟度が alpha かもしれない</td><td>着手時に、リリースノートと GitHub のリリースページを確認する。</td><td>壊れる前提で、作り直せる手順(Makefile、README)を残す。</td></tr>
-          <tr><td class="key">使いたい Ingress controller が終了している</td><td>段階 1 の F で、Kind の公式ドキュメントと各プロジェクトの現状を確認する。</td><td>別の Ingress controller を選ぶ。または Gateway API の実装を入口にする。</td></tr>
-          <tr><td class="key">Ingress をインターネットに公開してしまう</td><td>ファイアウォールを開けないままにして、SSH のポート転送で確認する。</td><td>公開しない。開けてしまったら、すぐに閉じて設定を見直す。</td></tr>
-          <tr><td class="key">Istio と agentgateway で、入口の役割が重なる</td><td>どちらも Gateway API を扱える。段階 4b で Istio の入口を作る前に、GatewayClass で担当を分ける方法を調べる。</td><td>段階 7 の前に、Istio の入口を片付ける。または、Istio は一部の namespace だけに限る。</td></tr>
-          <tr><td class="key">Istio のモードの選択で迷う</td><td>sidecar 方式と ambient 方式がある。着手時に、公式ドキュメントで現在の推奨と、kagent 1.0(Substrate、gVisor)との相性を調べる。</td><td>通信の仕組みを学ぶ目的に合う方を選ぶ。合わなければ、対象の namespace を絞る。</td></tr>
-          <tr><td class="key">Terraform の状態ファイルをコミットしてしまう</td><td>状態ファイルには、請求アカウント ID などが入る。<code>.gitignore</code> に、<code>*.tfstate</code>、<code>.terraform/</code>、<code>*.tfvars</code> を入れてある。コミット前に <code>git status</code> で確認する。</td><td>気づいたら、履歴から消す方法を調べる。公開前なら、履歴ごと作り直す。</td></tr>
+          <tr><td class="key">成熟度が alpha かもしれない</td><td>着手時に、リリースノートと GitHub のリリースページを確認する。</td><td>壊れる前提で、作り直せる手順を残す。</td></tr>
+          <tr><td class="key">止め忘れで、課金が続く</td><td>自動停止のスケジュールを、最初のコードに入れる。作業の終わりに、VM とディスクの状態を確認する。予算アラートは見送り中。</td><td>長く使わないときは、Terraform で VM を消す。</td></tr>
+          <tr><td class="key">Terraform の状態ファイルをコミットしてしまう</td><td><code>.gitignore</code> に、<code>*.tfstate</code>、<code>.terraform/</code>、<code>*.tfvars</code> を入れてある。コミット前に <code>git status</code> で確認する。</td><td>気づいたら、履歴から消す方法を調べる。</td></tr>
+          <tr><td class="key">ブログに、実値を載せてしまう</td><td>プロジェクト ID、請求アカウント ID、メールアドレス、IP は、伏せるか、ダミーにする。スクリーンショットも確認する。</td><td>公開前に、記事全体を読み直す。</td></tr>
         </tbody>
       </table>
     </div>
   </section>
 
   <section id="budget">
-    <h2>メモリの見積り(目安)</h2>
-    <p>VM の大きさを決めるための、ざっくりした見積りです。Substrate の数字は特に根拠が薄いので、実測して直します。全部が揃うのは段階 7 で、段階 1 は control-plane と worker だけなので軽く済みます。段階が進むごとに VM を大きくする前提です。</p>
-    <div class="scroll" tabindex="0" role="region" aria-label="メモリ見積りの表">
+    <h2>ノードの大きさとメモリの見積り(目安)</h2>
+    <p>根拠の薄い目安です。実測して直します。VM は台数分の OS とディスクが要るので、Kind で 1 台にまとめるより、合計は大きくなります。段階が進むごとに、停止中にマシンタイプを大きくする前提です。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="ノードの大きさの表">
       <table>
-        <thead><tr><th>構成要素</th><th class="num">目安</th><th>備考</th></tr></thead>
+        <thead><tr><th>ノード</th><th class="num">段階 1 の目安</th><th class="num">段階 6〜7 の目安</th><th>載せるもの</th></tr></thead>
         <tbody>
-          <tr><td class="key">Kind ノード 4 台</td><td class="num">3〜4 GB</td><td>control-plane 1 台と worker 3 台</td></tr>
-          <tr><td class="key">vLLM(CPU)</td><td class="num">6〜8 GB</td><td>小さいモデルを前提にしている</td></tr>
-          <tr><td class="key">PostgreSQL</td><td class="num">0.5〜1 GB</td><td>段階 6a から</td></tr>
-          <tr><td class="key">Agent Substrate</td><td class="num">2〜4 GB</td><td>コントローラと WorkerPool。根拠が薄い</td></tr>
-          <tr><td class="key">kagent 1.0</td><td class="num">1〜2 GB</td><td>段階 6b から</td></tr>
-          <tr><td class="key">agentgateway</td><td class="num">0.5〜1 GB</td><td>段階 7 から</td></tr>
-          <tr><td class="key">Argo CD</td><td class="num">1〜2 GB</td><td>段階 5 から</td></tr>
-          <tr><td class="key">API・ワーカ・Redis</td><td class="num">1 GB 未満</td><td></td></tr>
-          <tr><td class="key">Istio</td><td class="num">1〜2 GB</td><td>istiod と入口。段階 4b から。根拠が薄い</td></tr>
-          <tr><td class="key">OS と Docker</td><td class="num">2〜3 GB</td><td></td></tr>
-          <tr class="total"><td>合計</td><td class="num">17〜28 GB</td><td>32GB 級が最低ライン。余裕を見るなら 64GB 級を検討する</td></tr>
+          <tr><td class="key">control-plane</td><td class="num">2 vCPU / 4 GB</td><td class="num">同じ</td><td>API サーバ、etcd、scheduler、controller-manager。kubeadm の最低条件は、公式ドキュメントで確認する</td></tr>
+          <tr><td class="key">worker-1(アプリ)</td><td class="num">2 vCPU / 4 GB</td><td class="num">4 vCPU / 8〜16 GB</td><td>API、Redis、PostgreSQL、Argo CD、Istio、agentgateway</td></tr>
+          <tr><td class="key">worker-2(推論・エージェント)</td><td class="num">2 vCPU / 4 GB</td><td class="num">8 vCPU / 16〜32 GB</td><td>vLLM(6〜8GB 前後)、ワーカ、Substrate、kagent</td></tr>
+          <tr class="total"><td>合計</td><td class="num">約 12 GB</td><td class="num">約 28〜52 GB</td><td>vLLM の CPU 版は、AVX512 対応の CPU が望ましい(要確認)。マシンの系列で変わる</td></tr>
         </tbody>
       </table>
     </div>
@@ -430,16 +485,41 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
   <section id="cost">
     <h2>費用を抑える運用</h2>
     <ul>
-      <li>使うときだけ起動する。停止中はディスク代だけが残る</li>
-      <li>夜間の自動停止(インスタンススケジュール)を設定して、止め忘れを防ぐ</li>
-      <li>予算アラートを、VM より先に、Terraform で作る。アラートは通知だけで、上限に達しても課金は止まらない</li>
-      <li>外部 IP は固定せず、Cloud NAT は使わない</li>
-      <li>最初は通常の VM。慣れたらスポット VM を試す(突然止まることがある)</li>
-      <li>使わなくなったら VM とディスクを削除する</li>
-      <li>起動と停止を繰り返すと Kind が壊れることがある。作り直せるよう、クラスタ作成の手順を残しておく</li>
+      <li>使うときだけ起動する。<strong>全 VM</strong>を停止すると、CPU とメモリの課金は止まるが、ディスクは台数分、課金が続く</li>
+      <li>夜間の自動停止(インスタンススケジュール)を、VM と同じ Terraform のコードに入れて、止め忘れを防ぐ</li>
+      <li>Cloud NAT は、VM 台数分の時間課金と、通信量(1 GiB あたり)の課金がある。外部 IP を台数分付ける方式と比べて、同程度かやや安い見込み。単価は公式の料金ページで確認する</li>
+      <li>固定の外部 IP は使わない。ロードバランサも使わない</li>
+      <li>サブネットを 2 つに分けても、費用は、ほぼ増えない見込み。VM は 3 台とも同じゾーンに置き、ノード間の通信を無料にする。Cloud NAT は、両方のサブネットで 1 つを共用する</li>
       <li>最初は小さな VM で始め、メモリが必要になる段階で、停止中にマシンタイプを変更する。変更できる条件は、公式ドキュメントで確認する</li>
+      <li>長く使わないときは、Terraform で VM とディスクを消す。作り直せるよう、手順と設定をリポジトリに残す</li>
+      <li>最初は通常の VM。慣れたらスポット VM を試す(突然止まることがある)</li>
+      <li>予算アラートは見送り中。気が向いたら、Terraform で作る。通知先は、請求アカウントの管理者へのメールが既定</li>
     </ul>
-    <p class="note"><strong>VM の作成と課金に関わる設定は、内容を確認してから実行します。</strong>金額は、実際のマシンタイプとリージョンが決まってから料金計算ツールで見積もります。</p>
+    <p class="note"><strong>VM の作成と課金に関わる設定は、内容を確認してから実行します。</strong>金額は、実際のマシンタイプとリージョンが決まってから、料金計算ツールで見積もります。</p>
+  </section>
+
+  <section id="publish">
+    <h2>成果の公開(Zenn)</h2>
+    <p>学んだことは、Zenn の記事にします。記事のリポジトリは <code>~/Dev/zenn</code> で、既存の kagent の記事の続きにもなります。</p>
+    <div class="scroll" tabindex="0" role="region" aria-label="記事の候補の表">
+      <table>
+        <thead><tr><th>段階</th><th>記事の候補</th></tr></thead>
+        <tbody>
+          <tr><td class="key">0b</td><td>Terraform で、GCP の専用 VPC、IAP、Cloud NAT を作る</td></tr>
+          <tr><td class="key">1</td><td>kubeadm で、3 ノードのクラスタを作る。<code>init</code> と <code>join</code> の中身、つまずき</td></tr>
+          <tr><td class="key">1、4</td><td>Service と Ingress の仕組み。NetworkPolicy</td></tr>
+          <tr><td class="key">4b</td><td>Ingress から Istio へ移行して分かったこと</td></tr>
+          <tr><td class="key">5</td><td>Argo CD で、手書きのマニフェストを GitOps に移す</td></tr>
+          <tr><td class="key">6a、6b、7</td><td>kagent 1.0 と Agent Substrate を、自前のクラスタで動かす。agentgateway を通す</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>記事の書き方は、<code>~/Dev/zenn/CLAUDE.md</code> のルールに従う。下書きは <code>published: false</code>。公開は、自分が指示したときだけ</li>
+      <li>事実とバージョンは、公式ドキュメントで確認できるものだけ書く。動作確認したコードだけ載せる</li>
+      <li>プロジェクト ID、請求アカウント ID、組織 ID、メールアドレス、IP アドレスは、書かない</li>
+      <li>学習ノート(<code>docs/</code>)は、記事にできる形で書いておく。つまずきと、予想と結果の違いが、記事の種になる</li>
+    </ul>
   </section>
 
   <section id="repo">
@@ -448,11 +528,11 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
       <table>
         <thead><tr><th>フォルダ</th><th>入れるもの</th><th class="num">段階</th></tr></thead>
         <tbody>
-          <tr><td class="key mono">terraform/budget(新規)</td><td>予算アラート(<code>google_billing_budget</code>)。VM より先に作る</td><td class="num">0b</td></tr>
-          <tr><td class="key mono">terraform/vm(新規)</td><td>手で作った VM の再現。状態ファイルはコミットしない</td><td class="num">0b</td></tr>
-          <tr><td class="key mono">cluster/</td><td>Kind の設定(worker 3 台)、作成・削除の手順</td><td class="num">1</td></tr>
-          <tr><td class="key mono">apps/api, apps/worker</td><td>アプリのコードと Dockerfile</td><td class="num">3</td></tr>
+          <tr><td class="key mono">terraform/network(新規)</td><td>VPC、サブネット、ファイアウォール、Cloud Router、Cloud NAT</td><td class="num">0b</td></tr>
+          <tr><td class="key mono">terraform/vm(新規)</td><td>VM 3 台と自動停止。状態ファイルはコミットしない</td><td class="num">0b</td></tr>
+          <tr><td class="key mono">cluster/</td><td>kubeadm の設定、CNI のマニフェスト、各ノードの前提設定の手順</td><td class="num">1</td></tr>
           <tr><td class="key mono">manifests/10-vllm</td><td>vLLM の Deployment、Service、PVC</td><td class="num">2</td></tr>
+          <tr><td class="key mono">apps/api, apps/worker</td><td>アプリのコードと Dockerfile</td><td class="num">3</td></tr>
           <tr><td class="key mono">manifests/20-api, 30-worker, 40-queue</td><td>API、ワーカ、Redis のマニフェスト</td><td class="num">3</td></tr>
           <tr><td class="key mono">manifests/90-policy</td><td>NetworkPolicy、RBAC、ResourceQuota</td><td class="num">4</td></tr>
           <tr><td class="key mono">manifests/50-istio(新規)</td><td>Istio の入口(Gateway、VirtualService)。Ingress との比較ノート</td><td class="num">4b</td></tr>
@@ -460,9 +540,9 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
           <tr><td class="key mono">gitops/substrate(新規)</td><td>PostgreSQL、Substrate、WorkerPool</td><td class="num">6a</td></tr>
           <tr><td class="key mono">gitops/kagent</td><td>kagent 1.0 の Helm values、ModelConfig、Agent</td><td class="num">6b</td></tr>
           <tr><td class="key mono">gitops/agentgateway(新規)</td><td>agentgateway の設定、バックエンド、ルート</td><td class="num">7</td></tr>
-          <tr><td class="key mono">docs/00-vm-setup.md</td><td>VM の手順書(決めたこと、実行した手順、つまずき)</td><td class="num">0</td></tr>
-          <tr><td class="key mono">docs/01-k8s-basics.md</td><td>control-plane、worker、Service、Ingress の学習ノート</td><td class="num">1</td></tr>
-          <tr><td class="key mono">docs/</td><td>以降の段階ごとの学習ノート</td><td class="num">2〜</td></tr>
+          <tr><td class="key mono">docs/00-vm-setup.md</td><td>VM とネットワークの手順書(決めたこと、手順、つまずき)</td><td class="num">0、0b</td></tr>
+          <tr><td class="key mono">docs/01-kubeadm-basics.md</td><td>kubeadm、control-plane、worker、Service、Ingress の学習ノート</td><td class="num">1</td></tr>
+          <tr><td class="key mono">docs/</td><td>以降の段階ごとの学習ノート(記事の種)</td><td class="num">2〜</td></tr>
         </tbody>
       </table>
     </div>
@@ -475,30 +555,37 @@ footer { color: var(--muted); font-size: 0.82rem; border-top: 1px solid var(--li
       <div>
         <h3>確認が必要</h3>
         <ul>
-          <li>Kind の最新版が、Kubernetes 1.37 以上のノードイメージに対応しているか</li>
-          <li>段階 1 で使う Ingress controller と、その現状(メンテナンスが続いているか)</li>
-          <li>Istio のモード(sidecar か ambient か)、バージョン、Kubernetes 1.37 以上での対応</li>
-          <li>Istio と agentgateway の分担(どちらが入口を持つか)</li>
-          <li>gVisor のサンドボックスが、Kind(Docker のノード)の中で動くか</li>
-          <li>vLLM の CPU 版が、VM(x86_64)で問題なく動くか。使うモデルは何か</li>
-          <li>kagent 1.0 が OpenAI 互換のエンドポイント(vLLM、agentgateway)につなげるか</li>
+          <li>Kubernetes 1.37 以上の kubeadm、kubelet、kubectl のパッケージが、使えるか</li>
+          <li>kubeadm の最低条件(vCPU、メモリ)と、必要なポート</li>
+          <li>Cloud NAT の単価と、外部 IP の自動割り当ての課金の条件</li>
+          <li>サブネットとファイアウォールのルールの料金(資料に明記がなかった)</li>
+          <li>Cloud NAT が、2 つのサブネットをまとめて対象にできる設定</li>
+          <li>IAP の範囲、IAP の API、トンネルを使う権限、IAP の料金</li>
+          <li>VM を止めたときの内部 IP の扱い。予約が必要か</li>
+          <li>MetalLB が Google Cloud の VPC で使えるか。LoadBalancer の代替</li>
+          <li>vLLM の CPU 版が動くか。使うモデル。CPU の系列</li>
+          <li>gVisor のサンドボックスが、VM 上で動くか</li>
+          <li>kagent 1.0 が OpenAI 互換のエンドポイントにつなげるか</li>
+          <li>Istio のモード、バージョン、Kubernetes 1.37 以上での対応</li>
           <li>kagent、Substrate、agentgateway の最新バージョンと、互いの対応</li>
         </ul>
       </div>
       <div>
         <h3>自分で決める</h3>
         <ul>
-          <li>worker を 3 台にして、エージェント用を専用にするか</li>
+          <li>マシンタイプ、リージョン、OS、ディスクのサイズ</li>
+          <li>CNI(Flannel、Calico、Cilium など)</li>
+          <li>リポジトリ名を、kubeadm に合わせて変えるか</li>
           <li>API とワーカの言語と、ワーカにさせる処理(要約、分類など)</li>
           <li>段階 7 で呼ばせる、ツール用の MCP サーバの題材</li>
-          <li>Argo CD が見るリポジトリを公開にするか、認証つきの非公開にするか</li>
-          <li>VM のリージョンとマシンタイプ(最初は 16GB 前後。後で 32GB か 64GB か)、自動停止の時刻</li>
-          <li>VM を最初に作るとき、コンソールと gcloud のどちらで行うか(そのあと Terraform で再現する)</li>
-          <li>予算の金額としきい値(請求アカウントの通貨に合わせる)</li>
+          <li>Argo CD が見るリポジトリを、公開にするか、認証つきの非公開にするか</li>
+          <li>自動停止の時刻</li>
+          <li>予算アラートを、いつ作るか</li>
+          <li>Zenn の記事を、どの段階から書き始めるか</li>
         </ul>
       </div>
     </div>
   </section>
 
-  <footer>次の一手は段階 0 です。<code>gcloud auth application-default login</code> でログインし、予算アラートを Terraform で作ります。そのあと、マシン、リージョン、接続方法を決めて VM を作ります。決めたことと手順は <code>docs/00-vm-setup.md</code> に書き、一緒にレビューします。段階 6a の gVisor の確認は、早めに試せるよう、段階 1 のあとに小さく試す手もあります。</footer>
+  <footer>次の一手は段階 0 です。<code>gcloud auth application-default login</code> でログインし、リージョンとマシンタイプを決めてから、Terraform でネットワークと VM を作ります。決めたことと手順は <code>docs/00-vm-setup.md</code> に書き、一緒にレビューします。</footer>
 </main>
